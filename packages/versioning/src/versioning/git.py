@@ -139,8 +139,23 @@ def _run_git(
             returncode=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
-        )
+    )
     return completed
+
+
+def _git_config_value(repo_root: Path, key: str) -> str | None:
+    completed = _run_git(repo_root, ["config", "--get", key], check=False)
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _ensure_local_commit_identity(repo_root: Path) -> None:
+    if _git_config_value(repo_root, "user.name") is None:
+        _run_git(repo_root, ["config", "user.name", "Nebula Master"])
+    if _git_config_value(repo_root, "user.email") is None:
+        _run_git(repo_root, ["config", "user.email", "nebula-master@local.invalid"])
 
 
 def _classify_status(code: str) -> StatusKind:
@@ -609,6 +624,7 @@ def create_version_commit(
         raise SafetyRefusalError("save-version requires --yes for non-interactive execution")
 
     _stage_boundary_changes(context.repo_root, changed_files or boundary.files)
+    _ensure_local_commit_identity(context.repo_root)
     commit_lines = [
         message,
         "",

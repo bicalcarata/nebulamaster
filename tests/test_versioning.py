@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from renderer_cli.main import app
 from typer.testing import CliRunner
@@ -157,6 +158,38 @@ def test_save_version_can_init_repository_explicitly(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert "commit_hash" in payload
     assert (project_dir / ".git").exists()
+
+
+def test_save_version_init_sets_local_identity_when_global_git_config_is_missing(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    _copy_example("lion-natural", project_dir)
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "save-version",
+            str(project_dir),
+            "--message",
+            "Initial natural version",
+            "--yes",
+            "--init",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert _git(project_dir, "config", "--local", "--get", "user.name").stdout.strip() == "Nebula Master"
+    assert (
+        _git(project_dir, "config", "--local", "--get", "user.email").stdout.strip()
+        == "nebula-master@local.invalid"
+    )
 
 
 def test_unrelated_repository_changes_block_save_version(tmp_path: Path) -> None:
