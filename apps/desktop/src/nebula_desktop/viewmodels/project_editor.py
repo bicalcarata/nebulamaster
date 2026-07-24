@@ -9,14 +9,17 @@ from typing import Literal
 
 from engine import (
     PreviewImageResult,
+    RenderResult,
     ValidationReport,
+    apply_crop,
     diff_bundles,
     load_valid_project_bundle,
+    render_bundle_output,
     render_preview_image,
     semantic_target_influence,
     validate_project,
 )
-from image_io import CanonicalImage, load_canonical_image
+from image_io import CanonicalImage, inspect_image, load_canonical_image, resize_exact
 from nebula_desktop.views.image_preview import ImageSample, OverlayRegion, SemanticOverlay
 from nebula_desktop.workers.preview import PreviewRenderWorker
 from project_io import read_yaml_mapping, resolve_reference_path, write_yaml_mapping
@@ -28,15 +31,20 @@ from project_model import (
     DeclarativeRule,
     Feather,
     FileReference,
+    PrintRenderProfile,
+    PrintUnits,
     ProjectBundle,
     ProjectDiffChange,
     ProjectDiffDocument,
     RangeSelection,
     RegionFile,
+    RenderProfileDeclaration,
     RuleMatch,
     RuleReorderChange,
     SaturationTransform,
+    ScreenRenderProfile,
     ShiftColourPointTransform,
+    SourceImage,
 )
 from project_model.models import ColourValue
 from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
@@ -44,6 +52,8 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
 PREVIEW_MAX_EDGE = 1200
 SelectionKind = Literal["adjustment", "region"]
 AdjustmentKind = Literal[
+    "black",
+    "shadows",
     "blue",
     "red",
     "green",
@@ -73,7 +83,6 @@ class AdjustmentSummary:
     colour_point_id: str | None
     colour_point_name: str | None
     swatch_rgb: tuple[float, float, float] | None
-    black_point_value: float | None
     primary_label: str | None
     primary_value: float | None
     secondary_label: str | None
@@ -144,6 +153,10 @@ def _slugify(value: str) -> str:
 
 def _type_label(rule: DeclarativeRule) -> str:
     transform = rule.transform
+    if _is_black_point_rule(rule):
+        return "Black Point"
+    if _is_shadows_rule(rule):
+        return "Shadows"
     if isinstance(transform, ColourAmountTransform):
         return transform.channel.capitalize()
     if isinstance(transform, ShiftColourPointTransform):
@@ -159,6 +172,10 @@ def _type_label(rule: DeclarativeRule) -> str:
 
 def _helper_text(rule: DeclarativeRule) -> str:
     transform = rule.transform
+    if _is_black_point_rule(rule):
+        return "Deepens the darkest parts of the image to set a stronger black point."
+    if _is_shadows_rule(rule):
+        return "Lifts or deepens darker detail above black without moving the whole image equally."
     if isinstance(transform, ColourAmountTransform):
         return (
             f"Controls how strongly the selected {transform.channel} glow appears "
@@ -189,6 +206,18 @@ def _supports_colour_point(transform: object) -> bool:
     return isinstance(transform, (ColourAmountTransform, ShiftColourPointTransform))
 
 
+def _is_black_point_rule(rule: DeclarativeRule) -> bool:
+    return isinstance(rule.transform, BrightnessTransform) and (
+        rule.id.startswith("black-point") or (rule.name or "").lower().startswith("black point")
+    )
+
+
+def _is_shadows_rule(rule: DeclarativeRule) -> bool:
+    return isinstance(rule.transform, BrightnessTransform) and (
+        rule.id.startswith("shadows") or (rule.name or "").lower().startswith("shadows")
+    )
+
+
 def _label_from_colour_point_id(colour_point_id: str) -> str:
     label = colour_point_id.replace("_", "-").split("-")[-1]
     return label.capitalize()
@@ -211,6 +240,8 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "green": ("nebula green", "green"),
         "cyan": ("nebula cyan", "cyan"),
         "yellow": ("nebula yellow", "yellow"),
+        "black": (),
+        "shadows": (),
         "brightness": (),
         "saturation": (),
         "smoothness": (),
@@ -296,6 +327,95 @@ class ProjectEditorViewModel(QObject):
         if self._working_documents is None:
             return None
         return self._working_documents.bundle.project_dir
+
+    def native_render_dimensions(self) -> tuple[int, int] | None:
+        if self._working_documents is None:
+            return None
+        bundle = self._working_documents.bundle
+        source = self._reference_source_model(bundle)
+        if source is None:
+            return None
+        source_path = resolve_reference_path(bundle.project_dir, source.path)
+        metadata = inspect_image(source_path)
+        width = max(1, int(round(bundle.project.crop.width * metadata.width)))
+        height = max(1, int(round(bundle.project.crop.height * metadata.height)))
+        return width, height
+
+    def default_print_dimensions(
+        self,
+        *,
+        units: PrintUnits = "cm",
+        ppi: int = 300,
+    ) -> tuple[float, float] | None:
+        native_dimensions = self.native_render_dimensions()
+        if native_dimensions is None:
+            return None
+        width_px, height_px = native_dimensions
+        if units == "cm":
+            return (width_px / ppi * 2.54, height_px / ppi * 2.54)
+        return (width_px / ppi, height_px / ppi)
+
+    def build_screen_export_profile(
+        self,
+        *,
+        output_format: str,
+        width_px: int,
+        interpolation: str,
+    ) -> ScreenRenderProfile:
+        return ScreenRenderProfile.model_validate(
+            {
+                "type": "screen",
+                "format": output_format,
+                "color_space": "srgb",
+                "bit_depth": 8 if output_format in {"png", "jpeg"} else 16,
+                "width_px": width_px,
+                "interpolation": interpolation,
+                "jpeg_quality": 92 if output_format == "jpeg" else None,
+            }
+        )
+
+    def build_print_export_profile(
+        self,
+        *,
+        output_format: str,
+        width: float,
+        height: float,
+        units: PrintUnits,
+        ppi: int,
+        interpolation: str,
+    ) -> PrintRenderProfile:
+        return PrintRenderProfile.model_validate(
+            {
+                "type": "print",
+                "format": output_format,
+                "color_space": "srgb",
+                "bit_depth": 8 if output_format == "png" else 16,
+                "width": width,
+                "height": height,
+                "units": units,
+                "ppi": ppi,
+                "crop_mode": "fit",
+                "interpolation": interpolation,
+            }
+        )
+
+    def export_render(
+        self,
+        *,
+        output_path: Path,
+        profile_id: str,
+        profile: RenderProfileDeclaration,
+        force: bool = False,
+    ) -> RenderResult:
+        if self._working_documents is None:
+            raise ValueError("no project is open")
+        return render_bundle_output(
+            self._working_documents.bundle.model_copy(deep=True),
+            profile_id=profile_id,
+            profile=profile,
+            output_path=output_path,
+            force=force,
+        )
 
     @property
     def dirty(self) -> bool:
@@ -392,10 +512,11 @@ class ProjectEditorViewModel(QObject):
     def current_semantic_overlay(self) -> SemanticOverlay | None:
         if self._semantic_overlay_mode == "off":
             return None
-        image = self.current_display_image()
-        if image is None:
+        display_image = self.current_display_image()
+        overlay_image = self._semantic_overlay_source_image()
+        if display_image is None or overlay_image is None:
             return None
-        mask = semantic_target_influence(image.data, self._semantic_overlay_mode)
+        mask = semantic_target_influence(overlay_image.data, self._semantic_overlay_mode)
         label = {
             "stars": "Star Split Overlay",
             "nebula": "Nebula Split Overlay",
@@ -437,7 +558,12 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.amount
             elif isinstance(transform, BrightnessTransform):
                 editable = True
-                primary_label = "Less / More"
+                if _is_black_point_rule(rule):
+                    primary_label = "Depth"
+                elif _is_shadows_rule(rule):
+                    primary_label = "Lift / Deepen"
+                else:
+                    primary_label = "Less / More"
                 primary_value = transform.amount
             elif isinstance(transform, SaturationTransform):
                 editable = True
@@ -466,11 +592,6 @@ class ProjectEditorViewModel(QObject):
                     colour_point_id=colour_point.id if colour_point is not None else None,
                     colour_point_name=colour_point_name,
                     swatch_rgb=swatch_rgb,
-                    black_point_value=(
-                        rule.match.brightness.min
-                        if supports_colour_point and rule.match.brightness is not None
-                        else (0.0 if supports_colour_point else None)
-                    ),
                     primary_label=primary_label,
                     primary_value=primary_value,
                     secondary_label=secondary_label,
@@ -829,7 +950,9 @@ class ProjectEditorViewModel(QObject):
             transform.amount = max(1.0, min(2.0, value))
         elif isinstance(transform, ShiftColourPointTransform):
             transform.amount = max(0.0, min(1.0, value))
-        elif isinstance(transform, (BrightnessTransform, SaturationTransform)):
+        elif isinstance(transform, BrightnessTransform):
+            transform.amount = max(0.0, min(4.0, value))
+        elif isinstance(transform, SaturationTransform):
             transform.amount = max(0.0, min(2.0, value))
         elif isinstance(transform, ColourSmoothingTransform):
             transform.strength = max(0.0, min(1.0, value))
@@ -844,16 +967,6 @@ class ProjectEditorViewModel(QObject):
         if isinstance(rule.transform, ColourSmoothingTransform):
             rule.transform.radius = value
             self._after_metadata_change(render=True)
-
-    def set_selected_adjustment_black_point(self, value: float) -> None:
-        rule = self._selected_rule_model()
-        if rule is None:
-            return
-        current_max = 1.0
-        if rule.match.brightness is not None:
-            current_max = max(rule.match.brightness.max, value)
-        rule.match.brightness = RangeSelection(min=value, max=current_max)
-        self._after_metadata_change(render=True)
 
     def set_selected_adjustment_apply_everywhere(self, apply_everywhere: bool) -> None:
         rule = self._selected_rule_model()
@@ -1199,6 +1312,32 @@ class ProjectEditorViewModel(QObject):
         source = reference if reference is not None else enabled_sources[0]
         return load_canonical_image(resolve_reference_path(bundle.project_dir, source.path))
 
+    def _semantic_overlay_source_image(self) -> CanonicalImage | None:
+        display_image = self.current_display_image()
+        if self._source_image is None or display_image is None:
+            return None
+        if self._show_source or self._working_documents is None:
+            return self._source_image
+        cropped_source = apply_crop(self._source_image, self._working_documents.bundle.project.crop)
+        if (
+            cropped_source.width == display_image.width
+            and cropped_source.height == display_image.height
+        ):
+            return cropped_source
+        return resize_exact(
+            cropped_source,
+            display_image.width,
+            display_image.height,
+            method="lanczos",
+        )
+
+    def _reference_source_model(self, bundle: ProjectBundle) -> SourceImage | None:
+        enabled_sources = [source for source in bundle.project.sources if source.enabled]
+        if not enabled_sources:
+            return None
+        reference = next((source for source in enabled_sources if source.reference), None)
+        return reference if reference is not None else enabled_sources[0]
+
     def _region_model(self, region_id: str) -> RegionFile | None:
         if self._working_documents is None:
             return None
@@ -1306,6 +1445,8 @@ class ProjectEditorViewModel(QObject):
 
     def _default_adjustment_name(self, kind: AdjustmentKind) -> str:
         return {
+            "black": "Black Point",
+            "shadows": "Shadows",
             "blue": "Blue",
             "red": "Red",
             "green": "Green",
@@ -1318,6 +1459,8 @@ class ProjectEditorViewModel(QObject):
 
     def _selected_adjustment_name(self, kind: AdjustmentKind) -> str:
         return {
+            "black": "Selected Black Point",
+            "shadows": "Selected Shadows",
             "blue": "Selected Blue",
             "red": "Selected Red",
             "green": "Selected Green",
@@ -1416,6 +1559,20 @@ class ProjectEditorViewModel(QObject):
                 colour_range=0.10,
                 brightness=RangeSelection(min=0.0, max=1.0),
                 softness=0.35,
+            )
+        elif kind == "black":
+            transform = BrightnessTransform(type="brightness", amount=0.82)
+            match = RuleMatch(
+                colour_point=None,
+                brightness=RangeSelection(min=0.0, max=0.18),
+                softness=0.30,
+            )
+        elif kind == "shadows":
+            transform = BrightnessTransform(type="brightness", amount=1.18)
+            match = RuleMatch(
+                colour_point=None,
+                brightness=RangeSelection(min=0.10, max=0.42),
+                softness=0.38,
             )
         elif kind == "brightness":
             transform = BrightnessTransform(type="brightness", amount=1.12)

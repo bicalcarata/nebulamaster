@@ -9,12 +9,24 @@ import numpy as np
 import yaml
 from image_io import inspect_image
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
-from nebula_desktop.application.window import MainWindow
+from nebula_desktop.application.window import (
+    MainWindow,
+    _brightness_amount_to_ui,
+)
 from nebula_desktop.viewmodels.project_editor import AdjustmentKind, ProjectEditorViewModel
-from nebula_desktop.views.image_preview import ImagePreviewWidget, ImageSample
+from nebula_desktop.views.image_preview import (
+    ImagePreviewWidget,
+    ImageSample,
+    semantic_overlay_rgba,
+)
 from PIL import Image
 from project_io import read_yaml_mapping
-from project_model import ColourAmountTransform, SaturationTransform, ShiftColourPointTransform
+from project_model import (
+    BrightnessTransform,
+    ColourAmountTransform,
+    SaturationTransform,
+    ShiftColourPointTransform,
+)
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
@@ -43,6 +55,17 @@ def _append_rule(project_dir: Path, rule: dict[str, Any]) -> None:
 def _create_source_image(path: Path) -> None:
     image = Image.new("RGB", (16, 12), color=(32, 64, 128))
     image.save(path)
+
+
+def _write_star_nebula_tiff(path: Path) -> None:
+    width, height = 96, 64
+    data = np.zeros((height, width, 3), dtype=np.uint8)
+    data[:, :, :] = [12, 10, 20]
+    data[20:48, 18:44, :] = [70, 30, 24]
+    data[46:58, 34:76, :] = [80, 34, 28]
+    for x, y in [(12, 10), (58, 24), (76, 18), (70, 50)]:
+        data[max(0, y - 1) : y + 2, max(0, x - 1) : x + 2, :] = [255, 255, 255]
+    Image.fromarray(data, mode="RGB").save(path, format="TIFF")
 
 
 def _preview_sample(view_model: ProjectEditorViewModel) -> ImageSample:
@@ -219,7 +242,7 @@ def test_open_project_renders_preview_once_on_load(monkeypatch: Any, tmp_path: P
     assert calls == 1
 
 
-def test_adjustment_summary_exposes_rule_specific_point_label_and_black_point(
+def test_adjustment_summary_exposes_rule_specific_point_label(
     tmp_path: Path,
 ) -> None:
     project_dir = _copy_example_project(tmp_path)
@@ -230,23 +253,9 @@ def test_adjustment_summary_exposes_rule_specific_point_label_and_black_point(
     summary = view_model.selected_adjustment_summary()
     assert summary is not None
     assert summary.point_label == "Red Point"
-    assert summary.black_point_value == 0.0
-
-    view_model.set_selected_adjustment_black_point(0.27)
-    updated = view_model.selected_adjustment_summary()
-    assert updated is not None
-    assert updated.black_point_value == 0.27
-
-    working_documents = view_model._working_documents
-    assert working_documents is not None
-    red_rule = view_model._find_rule(working_documents.bundle, "red")
-    assert red_rule is not None
-    assert red_rule.match.brightness is not None
-    assert red_rule.match.brightness.min == 0.27
-    assert red_rule.match.brightness.max == 1.0
 
 
-def test_non_colour_adjustments_hide_point_and_black_point_controls(tmp_path: Path) -> None:
+def test_non_colour_adjustments_hide_point_controls(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
@@ -257,7 +266,6 @@ def test_non_colour_adjustments_hide_point_and_black_point_controls(tmp_path: Pa
     assert summary.point_label is None
     assert summary.supports_colour_point is False
     assert summary.colour_point_id is None
-    assert summary.black_point_value is None
 
 
 def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
@@ -278,6 +286,63 @@ def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
     assert window.primary_input.suffix() == "%"
     assert window.primary_input.minimum() == 0.0
     assert window.primary_input.maximum() == 100.0
+
+
+def test_adjustment_list_labels_use_target_and_omit_duplicate_type_text(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    first_label = window.adjustments_list.item(0).text()
+    assert "Entire image" not in first_label
+    assert "Reveal faint blue glow • Nebula" in first_label
+
+    window.view_model.create_adjustment("cyan")
+    qtbot.waitUntil(lambda: window.adjustments_list.count() > 0, timeout=5000)
+    labels = [
+        window.adjustments_list.item(index).text()
+        for index in range(window.adjustments_list.count())
+    ]
+    assert any("Cyan • Combined Image" in label for label in labels)
+    assert all("Cyan • Cyan" not in label for label in labels)
+
+
+def test_brightness_control_uses_exposure_style_mapping(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_payload = read_yaml_mapping(project_dir / "project.yaml")
+    for rule in project_payload["rules"]:
+        if rule["id"] == "brightness":
+            rule["transform"]["amount"] = 1.12
+            break
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(project_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.select_adjustment("brightness")
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.transform_type == "brightness"
+    assert abs(_brightness_amount_to_ui(summary.primary_value or 0.0) - 8.0) <= 1.0
+
+    window._on_primary_value_changed(100.0)
+
+    updated = window.view_model.selected_adjustment_summary()
+    assert updated is not None
+    assert updated.primary_value is not None
+    assert updated.primary_value >= 3.99
 
 
 def test_adjustment_editor_shows_semantic_target_selector(
@@ -352,6 +417,137 @@ def test_semantic_overlay_selector_updates_preview_overlay(
     qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is None, timeout=5000)
 
 
+def test_semantic_overlay_is_a_transparent_tint_not_a_replacement_image() -> None:
+    mask = np.array([[0.0, 0.5], [1.0, 0.25]], dtype=np.float32)
+    rgba = semantic_overlay_rgba(mask, "nebula")
+
+    assert rgba.shape == (2, 2, 4)
+    assert int(rgba[0, 0, 3]) >= 150
+    assert tuple(int(channel) for channel in rgba[0, 0, :3]) == (0, 0, 0)
+    assert 0 < int(rgba[0, 1, 3]) < 255
+    assert 0 < int(rgba[1, 0, 3]) < 255
+    assert tuple(int(channel) for channel in rgba[1, 0, :3]) == (163, 230, 255)
+
+
+def test_nebula_overlay_fill_alpha_stays_subtle_inside_large_selected_area() -> None:
+    mask = np.ones((6, 6), dtype=np.float32)
+    rgba = semantic_overlay_rgba(mask, "nebula")
+
+    # Interior pixels should remain lightly tinted rather than washing the preview.
+    assert int(rgba[3, 3, 3]) <= 20
+
+
+def test_nebula_overlay_suppresses_star_like_non_target_pixels() -> None:
+    mask = np.ones((7, 7), dtype=np.float32)
+    mask[3, 3] = 0.0
+    rgba = semantic_overlay_rgba(mask, "nebula")
+
+    assert tuple(int(channel) for channel in rgba[3, 3, :3]) == (0, 0, 0)
+    assert int(rgba[3, 3, 3]) >= 150
+    assert int(rgba[2, 2, 3]) < int(rgba[3, 3, 3])
+
+
+def test_brightness_adjustment_does_not_break_semantic_overlay(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    _write_star_nebula_tiff(project_dir / "sources/source-01.tif")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    from engine.preview import render_preview_image
+
+    def immediate_render(*, immediate: bool = False) -> None:
+        _ = immediate
+        working_documents = view_model._working_documents
+        assert working_documents is not None
+        view_model._active_job_id += 1
+        view_model.apply_preview_result(
+            view_model._active_job_id,
+            render_preview_image(
+                working_documents.bundle.model_copy(deep=True),
+                include_provenance=False,
+                use_cached_sources=True,
+            ),
+        )
+
+    monkeypatch.setattr(view_model, "request_preview_render", immediate_render)
+
+    view_model.set_semantic_overlay_mode("stars")
+    before = view_model.current_semantic_overlay()
+    assert before is not None
+
+    view_model.select_adjustment("brightness")
+    view_model.set_selected_adjustment_primary_value(1.4)
+
+    after = view_model.current_semantic_overlay()
+    assert after is not None
+    np.testing.assert_allclose(after.mask, before.mask, atol=1e-6)
+
+
+def test_overlay_off_clears_immediately_and_stays_cleared_after_brightness_rerender(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    _write_star_nebula_tiff(project_dir / "sources/source-01.tif")
+    project_payload = read_yaml_mapping(project_dir / "project.yaml")
+    for rule in project_payload["rules"]:
+        if rule["id"] == "brightness":
+            rule["transform"]["amount"] = 1.12
+            break
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(project_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    from engine.preview import render_preview_image
+
+    def immediate_render(*, immediate: bool = False) -> None:
+        _ = immediate
+        working_documents = window.view_model._working_documents
+        assert working_documents is not None
+        window.view_model._active_job_id += 1
+        window.view_model.apply_preview_result(
+            window.view_model._active_job_id,
+            render_preview_image(
+                working_documents.bundle.model_copy(deep=True),
+                include_provenance=False,
+                use_cached_sources=True,
+            ),
+        )
+
+    monkeypatch.setattr(window.view_model, "request_preview_render", immediate_render)
+
+    stars_index = window.semantic_overlay_selector.findData("stars")
+    assert stars_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(stars_index)
+    qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is not None, timeout=5000)
+
+    off_index = window.semantic_overlay_selector.findData("off")
+    assert off_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(off_index)
+    assert window.preview_widget.semantic_overlay() is None
+
+    window.view_model.select_adjustment("brightness")
+    before = window.view_model.current_display_image()
+    assert before is not None
+    before_data = before.data.copy()
+
+    window._on_primary_value_changed(100.0)
+
+    after = window.view_model.current_display_image()
+    assert after is not None
+    assert window.preview_widget.semantic_overlay() is None
+    assert not np.allclose(before_data, after.data, atol=1e-6)
+
+
 def test_adjustment_target_selector_updates_selected_rule(
     qtbot: Any,
     tmp_path: Path,
@@ -396,8 +592,6 @@ def test_adjustment_editor_hides_colour_controls_for_non_colour_adjustments(
     assert window.colour_point_label.isHidden()
     assert window.colour_swatch.isHidden()
     assert window.pick_button.isEnabled() is False
-    assert window.black_point_label.isHidden()
-    assert window.black_point_slider.isHidden()
 
 
 def test_disabled_rule_remains_declared_and_revert_restores_saved_state(tmp_path: Path) -> None:
@@ -911,10 +1105,54 @@ def test_new_green_cyan_and_yellow_adjustments_use_matching_defaults(tmp_path: P
     assert yellow_rule.transform.target_colour_point == "nebula-yellow"
 
 
+def test_new_black_point_adjustment_uses_dark_range_defaults(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("black")
+    black_rule = view_model._selected_rule_model()
+    assert black_rule is not None
+    assert black_rule.name == "Black Point"
+    assert isinstance(black_rule.transform, BrightnessTransform)
+    assert black_rule.transform.amount < 1.0
+    assert black_rule.match.colour_point is None
+    assert black_rule.match.brightness is not None
+    assert black_rule.match.brightness.min == 0.0
+    assert black_rule.match.brightness.max == 0.18
+
+
+def test_new_shadows_adjustment_uses_shadow_band_defaults(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("shadows")
+    shadows_rule = view_model._selected_rule_model()
+    assert shadows_rule is not None
+    assert shadows_rule.name == "Shadows"
+    assert isinstance(shadows_rule.transform, BrightnessTransform)
+    assert shadows_rule.transform.amount > 1.0
+    assert shadows_rule.match.colour_point is None
+    assert shadows_rule.match.brightness is not None
+    assert shadows_rule.match.brightness.min == 0.10
+    assert shadows_rule.match.brightness.max == 0.42
+
+
 def test_new_non_colour_adjustments_do_not_default_to_colour_points(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("black")
+    black_rule = view_model._selected_rule_model()
+    assert black_rule is not None
+    assert black_rule.match.colour_point is None
+
+    view_model.create_adjustment("shadows")
+    shadows_rule = view_model._selected_rule_model()
+    assert shadows_rule is not None
+    assert shadows_rule.match.colour_point is None
 
     view_model.create_adjustment("saturation")
     saturation_rule = view_model._selected_rule_model()
@@ -925,6 +1163,70 @@ def test_new_non_colour_adjustments_do_not_default_to_colour_points(tmp_path: Pa
     brightness_rule = view_model._selected_rule_model()
     assert brightness_rule is not None
     assert brightness_rule.match.colour_point is None
+
+
+def test_black_point_and_shadows_use_distinct_editor_language(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("black")
+    black_summary = window.view_model.selected_adjustment_summary()
+    assert black_summary is not None
+    assert black_summary.type_label == "Black Point"
+    assert black_summary.primary_label == "Depth"
+    assert "stronger black point" in black_summary.helper_text
+
+    window.view_model.create_adjustment("shadows")
+    shadows_summary = window.view_model.selected_adjustment_summary()
+    assert shadows_summary is not None
+    assert shadows_summary.type_label == "Shadows"
+    assert shadows_summary.primary_label == "Lift / Deepen"
+    assert "darker detail above black" in shadows_summary.helper_text
+
+
+def test_export_defaults_and_profiles_reflect_native_source_dimensions(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    native_dimensions = view_model.native_render_dimensions()
+    assert native_dimensions is not None
+    assert native_dimensions[0] > 0
+    assert native_dimensions[1] > 0
+
+    default_print = view_model.default_print_dimensions(units="cm", ppi=300)
+    assert default_print is not None
+    assert default_print[0] > 0.0
+    assert default_print[1] > 0.0
+
+    screen_profile = view_model.build_screen_export_profile(
+        output_format="jpeg",
+        width_px=native_dimensions[0] * 2,
+        interpolation="nearest",
+    )
+    assert screen_profile.format == "jpeg"
+    assert screen_profile.width_px == native_dimensions[0] * 2
+    assert screen_profile.interpolation == "nearest"
+    assert screen_profile.bit_depth == 8
+
+    print_profile = view_model.build_print_export_profile(
+        output_format="tiff",
+        width=default_print[0],
+        height=default_print[1],
+        units="cm",
+        ppi=300,
+        interpolation="nearest",
+    )
+    assert print_profile.format == "tiff"
+    assert print_profile.ppi == 300
+    assert print_profile.interpolation == "nearest"
+    assert print_profile.bit_depth == 16
 
 
 def test_changing_colour_adjustment_amount_updates_preview_image(
@@ -964,6 +1266,47 @@ def test_changing_colour_adjustment_amount_updates_preview_image(
     after = view_model._current_preview
     assert after is not None
     assert not np.allclose(before.image.data, after.image.data, atol=1e-6)
+
+
+def test_brightness_adjustment_has_visible_low_vs_high_difference(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    _write_star_nebula_tiff(project_dir / "sources/source-01.tif")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    from engine.preview import render_preview_image
+
+    def immediate_render(*, immediate: bool = False) -> None:
+        _ = immediate
+        working_documents = view_model._working_documents
+        assert working_documents is not None
+        view_model._active_job_id += 1
+        view_model.apply_preview_result(
+            view_model._active_job_id,
+            render_preview_image(
+                working_documents.bundle.model_copy(deep=True),
+                include_provenance=False,
+                use_cached_sources=True,
+            ),
+        )
+
+    monkeypatch.setattr(view_model, "request_preview_render", immediate_render)
+
+    view_model.select_adjustment("brightness")
+    view_model.set_selected_adjustment_primary_value(1.15)
+    low = view_model._current_preview
+    assert low is not None
+    low_data = low.image.data.copy()
+
+    view_model.set_selected_adjustment_primary_value(4.0)
+    high = view_model._current_preview
+    assert high is not None
+
+    diff = np.abs(high.image.data - low_data)
+    assert float(diff.mean()) > 0.01
 
 
 def test_region_drawing_editing_and_scope_assignment_use_normalized_geometry(

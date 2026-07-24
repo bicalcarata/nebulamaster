@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import cast
 
+from project_model import PrintRenderProfile, ScreenRenderProfile
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
@@ -30,6 +33,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from nebula_desktop.application.export_dialogs import (
+    PrintExportDialog,
+    ScreenExportDialog,
+)
 from nebula_desktop.application.project_scaffold import (
     ProjectScaffoldError,
     scaffold_project_from_image,
@@ -58,6 +65,15 @@ def _swatch_pixmap(rgb: tuple[float, float, float], size: int = 20) -> QPixmap:
 def _allow_horizontal_shrink(widget: QWidget) -> None:
     widget.setMinimumWidth(0)
     widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+
+def _brightness_amount_to_ui(amount: float) -> float:
+    safe_amount = max(amount, 0.25)
+    return max(-100.0, min(100.0, math.log2(safe_amount) * 50.0))
+
+
+def _brightness_ui_to_amount(value: float) -> float:
+    return float(2.0 ** (value / 50.0))
 
 
 class MainWindow(QMainWindow):
@@ -96,9 +112,16 @@ class MainWindow(QMainWindow):
         new_project_action.triggered.connect(self._new_project_from_image_dialog)
         open_action = QAction("Open Project...", self)
         open_action.triggered.connect(self._open_project_dialog)
+        export_screen_action = QAction("Export for Screen...", self)
+        export_screen_action.triggered.connect(self._export_for_screen)
+        export_print_action = QAction("Export for Print...", self)
+        export_print_action.triggered.connect(self._export_for_print)
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(new_project_action)
         file_menu.addAction(open_action)
+        file_menu.addSeparator()
+        file_menu.addAction(export_screen_action)
+        file_menu.addAction(export_print_action)
 
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
@@ -332,11 +355,6 @@ class MainWindow(QMainWindow):
         point_layout.addWidget(self.colour_swatch)
         point_layout.addWidget(self.colour_point_label, 1)
 
-        self.black_point_label = QLabel("Black Point")
-        self.black_point_label.setStyleSheet("font-weight: 600;")
-        self.black_point_slider = QSlider(Qt.Orientation.Horizontal)
-        self.black_point_value_label = QLabel("")
-
         self.primary_label = QLabel("Amount")
         self.primary_label.setStyleSheet("font-weight: 600;")
         self.primary_input = QDoubleSpinBox()
@@ -361,9 +379,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.target_selector)
         layout.addWidget(self.colour_title_label)
         layout.addLayout(point_layout)
-        layout.addWidget(self.black_point_label)
-        layout.addWidget(self.black_point_slider)
-        layout.addWidget(self.black_point_value_label)
         layout.addWidget(self.primary_label)
         layout.addWidget(self.primary_input)
         layout.addWidget(self.secondary_label)
@@ -495,9 +510,6 @@ class MainWindow(QMainWindow):
 
         self.adjustment_enabled_checkbox.toggled.connect(self.view_model.set_selected_adjustment_enabled)
         self.target_selector.currentIndexChanged.connect(self._on_target_changed)
-        self.black_point_slider.valueChanged.connect(
-            lambda value: self.view_model.set_selected_adjustment_black_point(value / 100.0)
-        )
         self.primary_input.valueChanged.connect(self._on_primary_value_changed)
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
@@ -575,8 +587,168 @@ class MainWindow(QMainWindow):
 
         self.view_model.open_project(project_file)
 
+    def _ensure_project_open(self) -> bool:
+        if self.view_model.project_path is not None:
+            return True
+        QMessageBox.information(self, "No project open", "Open a project before exporting.")
+        return False
+
+    def _export_for_screen(self) -> None:
+        if not self._ensure_project_open():
+            return
+        native_dimensions = self.view_model.native_render_dimensions()
+        if native_dimensions is None:
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                "The source image dimensions could not be resolved for this project.",
+            )
+            return
+        dialog = ScreenExportDialog(
+            native_width=native_dimensions[0],
+            native_height=native_dimensions[1],
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.selected_options()
+        destination = self._choose_export_destination(
+            title="Export for Screen",
+            default_stem="screen-render",
+            suffix=options.suffix,
+        )
+        if destination is None:
+            return
+        profile = self.view_model.build_screen_export_profile(
+            output_format=options.output_format,
+            width_px=options.width_px,
+            interpolation=options.interpolation,
+        )
+        self._run_export(
+            output_path=destination,
+            profile_id="screen-export",
+            profile=profile,
+            success_title="Screen export complete",
+        )
+
+    def _export_for_print(self) -> None:
+        if not self._ensure_project_open():
+            return
+        default_dimensions = self.view_model.default_print_dimensions(units="cm", ppi=300)
+        if default_dimensions is None:
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                "The print dimensions could not be derived for this project.",
+            )
+            return
+        dialog = PrintExportDialog(
+            default_width=default_dimensions[0],
+            default_height=default_dimensions[1],
+            default_units="cm",
+            default_ppi=300,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.selected_options()
+        destination = self._choose_export_destination(
+            title="Export for Print",
+            default_stem="print-render",
+            suffix=options.suffix,
+        )
+        if destination is None:
+            return
+        profile = self.view_model.build_print_export_profile(
+            output_format=options.output_format,
+            width=options.width,
+            height=options.height,
+            units=options.units,
+            ppi=options.ppi,
+            interpolation=options.interpolation,
+        )
+        self._run_export(
+            output_path=destination,
+            profile_id="print-export",
+            profile=profile,
+            success_title="Print export complete",
+        )
+
+    def _choose_export_destination(
+        self,
+        *,
+        title: str,
+        default_stem: str,
+        suffix: str,
+    ) -> Path | None:
+        selected, _filter = QFileDialog.getSaveFileName(
+            self,
+            title,
+            str((self.view_model.project_path or Path.cwd()) / f"{default_stem}{suffix}"),
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff)",
+        )
+        if not selected:
+            return None
+        output_path = Path(selected)
+        if output_path.suffix == "":
+            output_path = output_path.with_suffix(suffix)
+        if output_path.exists():
+            overwrite = QMessageBox.question(
+                self,
+                "Overwrite existing file?",
+                f"{output_path.name} already exists. Replace it?",
+            )
+            if overwrite != QMessageBox.StandardButton.Yes:
+                return None
+        return output_path
+
+    def _run_export(
+        self,
+        *,
+        output_path: Path,
+        profile_id: str,
+        profile: ScreenRenderProfile | PrintRenderProfile,
+        success_title: str,
+    ) -> None:
+        self.status_label.setText("Exporting render...")
+        try:
+            result = self.view_model.export_render(
+                output_path=output_path,
+                profile_id=profile_id,
+                profile=profile,
+                force=True,
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                f"The final render could not be exported.\n\n{exc}",
+            )
+            self.status_label.setText("Export failed.")
+            return
+
+        self.status_label.setText(f"Render exported: {result.output_path}")
+        QMessageBox.information(
+            self,
+            success_title,
+            (
+                f"Render written to:\n{result.output_path}\n\n"
+                f"Output size: {result.output_dimensions.width} x "
+                f"{result.output_dimensions.height}\n"
+                f"{result.guidance}"
+            ),
+        )
+
     def _show_add_adjustment_menu(self) -> None:
         menu = QMenu(self)
+        menu.addAction(
+            "Add Black Point adjustment",
+            lambda: self.view_model.create_adjustment("black"),
+        )
+        menu.addAction(
+            "Add Shadows adjustment",
+            lambda: self.view_model.create_adjustment("shadows"),
+        )
         menu.addAction("Add Blue adjustment", lambda: self.view_model.create_adjustment("blue"))
         menu.addAction("Add Red adjustment", lambda: self.view_model.create_adjustment("red"))
         menu.addAction("Add Green adjustment", lambda: self.view_model.create_adjustment("green"))
@@ -618,7 +790,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_preview(self) -> None:
         self.preview_widget.set_image(self.view_model.current_display_image())
-        self.preview_widget.set_semantic_overlay(self.view_model.current_semantic_overlay())
+        overlay_mode = self.semantic_overlay_selector.currentData()
+        overlay = (
+            None
+            if overlay_mode == "off"
+            else self.view_model.current_semantic_overlay()
+        )
+        self.preview_widget.set_semantic_overlay(overlay)
         self.preview_widget.set_regions(
             self.view_model.overlay_regions(),
             selected_region_id=self.view_model.selected_region_id,
@@ -634,9 +812,7 @@ class MainWindow(QMainWindow):
         selected_row = -1
         for index, summary in enumerate(summaries):
             prefix = "✓" if summary.enabled else "○"
-            item = QListWidgetItem(
-                f"{prefix} {summary.name} • {summary.type_label} • {summary.scope_label}"
-            )
+            item = QListWidgetItem(self._adjustment_list_label(prefix, summary))
             item.setData(Qt.ItemDataRole.UserRole, summary.rule_id)
             if not summary.editable:
                 item.setForeground(QColor("#94a3b8"))
@@ -646,6 +822,12 @@ class MainWindow(QMainWindow):
         if selected_row >= 0:
             self.adjustments_list.setCurrentRow(selected_row)
         self._apply_adjustment_summary(self.view_model.selected_adjustment_summary())
+
+    def _adjustment_list_label(self, prefix: str, summary: AdjustmentSummary) -> str:
+        parts = [f"{prefix} {summary.name}", summary.target_label]
+        if summary.scope_label != "Entire image":
+            parts.append(summary.scope_label)
+        return " • ".join(parts)
 
     def _refresh_regions(self) -> None:
         summaries = self.view_model.region_summaries()
@@ -730,15 +912,6 @@ class MainWindow(QMainWindow):
         self.pick_button.setText(f"Pick {point_label}")
         self.pick_button.setEnabled(has_colour_controls and summary.editable)
 
-        self.black_point_label.setVisible(summary.black_point_value is not None)
-        self.black_point_slider.setVisible(summary.black_point_value is not None)
-        self.black_point_value_label.setVisible(summary.black_point_value is not None)
-        if summary.black_point_value is not None:
-            self.black_point_slider.setRange(0, 100)
-            with QSignalBlocker(self.black_point_slider):
-                self.black_point_slider.setValue(int(round(summary.black_point_value * 100)))
-            self.black_point_value_label.setText(f"{summary.black_point_value:.2f}")
-
         self.primary_label.setVisible(summary.primary_label is not None)
         self.primary_input.setVisible(summary.primary_value is not None)
         if summary.primary_label is not None and summary.primary_value is not None:
@@ -758,6 +931,12 @@ class MainWindow(QMainWindow):
             elif summary.type_label == "Smoothing":
                 spin_value = max(0.0, min(100.0, summary.primary_value * 100.0))
                 spin_range = (0.0, 100.0)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
+            elif summary.transform_type == "brightness":
+                spin_value = _brightness_amount_to_ui(summary.primary_value)
+                spin_range = (-100.0, 100.0)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
@@ -851,6 +1030,9 @@ class MainWindow(QMainWindow):
             return
         mode = self.semantic_overlay_selector.itemData(index)
         if isinstance(mode, str):
+            if mode == "off":
+                # Clear any visible diagnostic immediately before the next preview refresh.
+                self.preview_widget.set_semantic_overlay(None)
             self.view_model.set_semantic_overlay_mode(cast(SemanticOverlaySelection, mode))
 
     def _toggle_pick_mode(self, enabled: bool) -> None:
@@ -956,6 +1138,8 @@ class MainWindow(QMainWindow):
             normalized = value / 100.0
         elif summary.type_label == "Smoothing":
             normalized = value / 100.0
+        elif summary.transform_type == "brightness":
+            normalized = _brightness_ui_to_amount(value)
         else:
             normalized = 1.0 + (value / 100.0)
         self.view_model.set_selected_adjustment_primary_value(normalized)

@@ -10,6 +10,7 @@ from .render import (
     apply_crop,
     execute_project_image,
     plan_render,
+    render_bundle_output,
     render_output,
 )
 from .selection import apply_weighted_channel_transform, brightness_weight, colour_weight
@@ -71,6 +72,7 @@ __all__ = [
     "normalized_polygon_to_pixels",
     "plan_render",
     "region_influence",
+    "render_bundle_output",
     "render_output",
     "render_preview",
     "render_preview_image",

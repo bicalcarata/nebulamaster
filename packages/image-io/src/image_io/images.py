@@ -70,6 +70,8 @@ def resize_to_max_edge(image: CanonicalImage, max_edge: int) -> CanonicalImage:
 
 
 def _resampling(method: str) -> Image.Resampling:
+    if method == "nearest":
+        return Image.Resampling.NEAREST
     if method == "lanczos":
         return Image.Resampling.LANCZOS
     if method == "bicubic":

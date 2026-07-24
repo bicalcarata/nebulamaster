@@ -126,10 +126,13 @@ The system is split into two products:
 Responsibilities:
 
 - Import images
+- Create new projects from immutable source images
 - Create colour points
 - Draw regions
 - Edit sliders and rules
 - Preview and compare
+- Preview semantic star and nebula overlays
+- Export screen and print renders through the shared renderer
 - Present history and alternative versions
 - Manage project files
 
@@ -186,3 +189,24 @@ This repository should grow around three stable contracts:
 3. Desktop editor behavior as a client of the renderer
 
 See [docs/architecture.md](/Users/damon/gitlab/nebulamaster/docs/architecture.md) and [docs/project-format.md](/Users/damon/gitlab/nebulamaster/docs/project-format.md) for the initial specification.
+
+## Current Implementation
+
+The current repository includes:
+
+- A typed YAML project model built with Pydantic v2
+- Shared image loading, validation, preview rendering, and export paths
+- A renderer CLI with `nebula validate`, `nebula preview`, `nebula diff`, `nebula git`, and `nebula render`
+- A PySide6 desktop authoring client that edits declarative project metadata
+
+Current desktop mastering controls include:
+
+- Colour adjustments for Blue, Red, Green, Cyan, and Yellow
+- Tonal adjustments for Brightness, Saturation, Black Point, and Shadows
+- Colour smoothing
+- Semantic targets for Combined Image, Nebula, and Stars
+- Polygon region scoping
+- Image-driven colour-point sampling and adjustment creation
+- Screen and print export using the shared renderer
+
+The desktop preview can also show star and nebula diagnostic overlays so the user can see the current semantic split before applying adjustments.

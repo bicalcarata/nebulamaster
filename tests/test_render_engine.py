@@ -8,7 +8,7 @@ import numpy as np
 import yaml
 from engine import EXIT_INPUT_ERROR, EXIT_VALIDATION_SUCCESS
 from engine.render import apply_crop, plan_render, render_output
-from image_io import CanonicalImage
+from image_io import CanonicalImage, resize_exact
 from PIL import Image
 from project_model import CropDeclaration, PrintRenderProfile, ScreenRenderProfile
 from renderer_cli.main import app
@@ -238,6 +238,33 @@ def test_normalized_crop_calculation_and_application() -> None:
 
     assert cropped.width == 60
     assert cropped.height == 40
+
+
+def test_nearest_upscale_preserves_existing_pixels_without_inventing_detail() -> None:
+    source = CanonicalImage(
+        data=np.array(
+            [
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            ],
+            dtype=np.float32,
+        ),
+        width=2,
+        height=2,
+    )
+
+    resized = resize_exact(source, 4, 4, method="nearest")
+
+    expected = np.array(
+        [
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            [[0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            [[0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        ],
+        dtype=np.float32,
+    )
+    np.testing.assert_allclose(resized.data, expected, atol=1e-6)
 
 
 def test_fit_fill_and_exact_modes_resolve_differently() -> None:

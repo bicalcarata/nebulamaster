@@ -28,7 +28,7 @@ Identifier = Annotated[
 DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 SelectionSource = Literal["original", "current"]
 ColourChannel = Literal["red", "green", "blue"]
-InterpolationMethod = Literal["lanczos", "bicubic"]
+InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
 ColourSpace = Literal["srgb"]
@@ -208,7 +208,7 @@ class ShiftColourPointTransform(StrictModel):
 
 class BrightnessTransform(StrictModel):
     type: Literal["brightness"]
-    amount: float = Field(ge=0.0, le=2.0)
+    amount: float = Field(ge=0.0, le=4.0)
 
 
 class SaturationTransform(StrictModel):

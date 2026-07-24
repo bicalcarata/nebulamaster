@@ -21,6 +21,22 @@ from PySide6.QtWidgets import QWidget
 
 InteractionMode = Literal["navigate", "sampling", "draw_region", "edit_region"]
 SemanticOverlayMode = Literal["stars", "nebula"]
+OVERLAY_TINTS: dict[SemanticOverlayMode, tuple[float, float, float]] = {
+    "stars": (0.35, 0.78, 1.0),
+    "nebula": (0.64, 0.9, 1.0),
+}
+OVERLAY_FILL_ALPHA: dict[SemanticOverlayMode, float] = {
+    "stars": 0.14,
+    "nebula": 0.06,
+}
+OVERLAY_EDGE_ALPHA: dict[SemanticOverlayMode, float] = {
+    "stars": 0.44,
+    "nebula": 0.24,
+}
+OVERLAY_NON_TARGET_ALPHA: dict[SemanticOverlayMode, float] = {
+    "stars": 0.82,
+    "nebula": 0.72,
+}
 
 
 @dataclass(frozen=True)
@@ -67,6 +83,44 @@ def canonical_image_to_qimage(image: CanonicalImage) -> QImage:
         QImage.Format.Format_RGB888,
     )
     return qimage.copy()
+
+
+def semantic_overlay_rgba(mask: np.ndarray, mode: SemanticOverlayMode) -> np.ndarray:
+    clipped_mask = np.clip(mask, 0.0, 1.0).astype(np.float32, copy=False)
+    if mode == "stars":
+        display_mask = np.power(clipped_mask, 0.55).astype(np.float32, copy=False)
+    else:
+        display_mask = clipped_mask
+
+    edge_strength = np.maximum.reduce(
+        [
+            np.abs(display_mask - np.roll(display_mask, 1, axis=0)),
+            np.abs(display_mask - np.roll(display_mask, -1, axis=0)),
+            np.abs(display_mask - np.roll(display_mask, 1, axis=1)),
+            np.abs(display_mask - np.roll(display_mask, -1, axis=1)),
+        ]
+    ).astype(np.float32, copy=False)
+    edge_strength[0, :] = 0.0
+    edge_strength[-1, :] = 0.0
+    edge_strength[:, 0] = 0.0
+    edge_strength[:, -1] = 0.0
+
+    tint = np.asarray(OVERLAY_TINTS[mode], dtype=np.float32)
+    fill_alpha = display_mask * OVERLAY_FILL_ALPHA[mode]
+    edge_alpha = np.clip(edge_strength * OVERLAY_EDGE_ALPHA[mode] * 4.0, 0.0, 1.0)
+    suppress_alpha = np.power(
+        np.clip(1.0 - display_mask, 0.0, 1.0),
+        0.85,
+    ) * OVERLAY_NON_TARGET_ALPHA[mode]
+    tint_alpha = np.maximum(fill_alpha, edge_alpha)
+    alpha = np.clip(np.maximum(tint_alpha, suppress_alpha), 0.0, 1.0).astype(np.float32, copy=False)
+    rgba = np.empty((*display_mask.shape, 4), dtype=np.uint8)
+    tint_rgb = np.clip(tint[None, None, :] * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    use_tint = np.logical_and(display_mask >= 0.35, tint_alpha >= suppress_alpha)
+    rgba[..., :3] = 0
+    rgba[..., :3][use_tint] = tint_rgb
+    rgba[..., 3] = np.clip(alpha * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    return np.ascontiguousarray(rgba)
 
 
 class ImagePreviewWidget(QWidget):
@@ -246,26 +300,14 @@ class ImagePreviewWidget(QWidget):
             self._semantic_overlay_pixmap = None
             return
 
-        mask = np.clip(self._semantic_overlay.mask, 0.0, 1.0).astype(np.float32, copy=False)
-        if self._semantic_overlay.mode == "stars":
-            display_mask = np.power(np.clip(mask, 0.0, 1.0), 0.55).astype(np.float32, copy=False)
-        else:
-            display_mask = np.clip(mask, 0.0, 1.0).astype(np.float32, copy=False)
-
-        diagnostic = np.clip(
-            self._image.data * display_mask[..., None],
-            0.0,
-            1.0,
-        ).astype(np.float32, copy=False)
-        clipped = np.clip(diagnostic * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
-        contiguous = np.ascontiguousarray(clipped)
-        height, width, _channels = contiguous.shape
+        rgba = semantic_overlay_rgba(self._semantic_overlay.mask, self._semantic_overlay.mode)
+        height, width, _channels = rgba.shape
         qimage = QImage(
-            contiguous.data,
+            rgba.data,
             width,
             height,
-            width * 3,
-            QImage.Format.Format_RGB888,
+            width * 4,
+            QImage.Format.Format_RGBA8888,
         )
         self._semantic_overlay_pixmap = QPixmap.fromImage(qimage.copy())
 

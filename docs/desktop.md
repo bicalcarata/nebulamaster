@@ -1,6 +1,6 @@
 # Desktop Authoring Client
 
-Nebula Master desktop is an authoring client for existing declarative projects.
+Nebula Master desktop is a visual authoring client for declarative projects.
 
 The renderer remains authoritative. The desktop does not contain its own image-processing pipeline and it does not call the CLI through subprocesses. Every preview comes from the shared engine.
 
@@ -12,6 +12,19 @@ The renderer remains authoritative. The desktop does not contain its own image-p
 - Unsupported saved adjustments are preserved and continue to render.
 - Only metadata files whose semantic content changed are rewritten in this slice.
 
+## Project Creation
+
+The desktop can create a new project from a single TIFF, PNG, or JPEG source image.
+
+Workflow:
+
+- Choose a source image.
+- Choose a parent directory for the new project.
+- The desktop creates a new project root folder, project metadata, and source reference.
+- The original source image remains the immutable input.
+
+Project creation does not generate hidden edits or derived project state beyond normal declarative metadata.
+
 ## Mastering Desk
 
 The current desktop supports a beginner-facing mastering desk with:
@@ -20,16 +33,22 @@ The current desktop supports a beginner-facing mastering desk with:
 - Adjustments in declaration order
 - Regions
 - A shared-engine preview
+- Semantic target selection for Combined Image, Nebula, and Stars
+- Diagnostic semantic overlays
 - An unsaved semantic change list
 
 Supported editable adjustments:
 
-- Blue and Red colour amount
+- Blue, Red, Green, Cyan, and Yellow colour amount
 - Brightness
 - Saturation
+- Black Point
+- Shadows
 - Colour smoothness
 
 Unsupported saved adjustments remain visible, render normally, and are preserved on save.
+
+Adjustment list labels use ordinary language. Each row shows the adjustment name and what it affects, for example `Reveal faint blue glow • Nebula` or `Cyan • Stars`.
 
 ## Adjustment Order
 
@@ -66,6 +85,26 @@ Resulting behaviour:
 
 This keeps colour selection and region scope separate. The desktop stores no hidden masks, no persisted click coordinates, and no desktop-only adjustment model.
 
+The same sampling path is reused by explicit colour-point picking actions such as `Pick Blue Point`, `Pick Red Point`, `Pick Green Point`, `Pick Cyan Point`, and `Pick Yellow Point`.
+
+## Semantic Targets And Overlays
+
+Each adjustment can target one of three semantic layers:
+
+- Combined Image
+- Nebula
+- Stars
+
+This target affects both selection and transformation execution in the shared renderer.
+
+The preview can also show semantic diagnostic overlays:
+
+- `Overlay: Off`
+- `Overlay: Stars`
+- `Overlay: Nebula`
+
+These overlays are preview diagnostics only. They do not become project metadata, and they do not change the rendered output or exported files.
+
 ## Region Drawing
 
 The desktop supports polygon regions with normalized coordinates.
@@ -91,9 +130,31 @@ Each unsaved change is described in ordinary language, such as:
 
 Individual change removal is object-based rather than a linear undo stack. Reverting one adjustment or region restores that object to the last saved baseline while leaving unrelated working edits in place.
 
+## Export
+
+The desktop can export through the shared renderer for both screen and print.
+
+Screen export supports:
+
+- PNG
+- JPEG
+- TIFF
+- Optional upscale output sizing
+- Interpolation choices including nearest-neighbour style pixel-preserving upscale
+
+Print export supports:
+
+- PNG
+- JPEG
+- TIFF
+- Physical width and height
+- Output units
+- Target DPI / PPI
+
+Export remains declarative in the same sense as preview rendering: the output file is generated from immutable sources and project metadata and is not fed back into project state.
+
 ## Current Limitations
 
-- Project creation is not supported yet.
 - YAML comments are not preserved yet because the current loader uses `PyYAML`.
 - The desktop rewrites semantic YAML content rather than preserving original formatting.
 - Before/after comparison is toggle and hold-based rather than split-view.

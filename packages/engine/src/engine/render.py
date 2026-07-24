@@ -370,8 +370,29 @@ def render_output(
     if not report.valid or bundle is None:
         raise RenderInputError("project validation failed")
 
-    output_path, manifest_path = _ensure_output_path(output_path, force)
     profile = _resolve_profile(bundle, profile_id)
+    return render_bundle_output(
+        bundle,
+        profile_id=profile_id,
+        profile=profile,
+        output_path=output_path,
+        force=force,
+        dry_run=dry_run,
+        write_debug_masks_dir=write_debug_masks_dir,
+    )
+
+
+def render_bundle_output(
+    bundle: ProjectBundle,
+    *,
+    profile_id: str,
+    profile: RenderProfileDeclaration,
+    output_path: Path,
+    force: bool = False,
+    dry_run: bool = False,
+    write_debug_masks_dir: Path | None = None,
+) -> RenderResult:
+    output_path, manifest_path = _ensure_output_path(output_path, force)
     source = _reference_source(bundle)
     source_path = resolve_reference_path(bundle.project_dir, source.path)
 
@@ -426,7 +447,7 @@ def render_output(
     try:
         source_decl, resolved_source_path, canonical, execution, prepared_sources = (
             execute_project_image(
-                bundle,
+            bundle,
                 write_debug_masks_dir=write_debug_masks_dir,
             )
         )
