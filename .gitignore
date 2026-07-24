@@ -8,4 +8,4 @@ __pycache__/
 generated/
 cache/
 previews/
-
+.DS_Store
