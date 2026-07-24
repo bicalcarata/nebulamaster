@@ -481,7 +481,7 @@ class ProjectEditorViewModel(QObject):
     def is_adjustment_interacting(self) -> bool:
         return self._is_adjustment_interacting
 
-    def open_project(self, project_path: Path) -> bool:
+    def open_project(self, project_path: Path, *, async_preview: bool = False) -> bool:
         report = validate_project(project_path)
         if not report.valid:
             self._raise_validation_error(report)
@@ -521,7 +521,10 @@ class ProjectEditorViewModel(QObject):
         self.selectionChanged.emit(self._selection_kind)
         self.regionVisibilityChanged.emit(self._show_regions)
         self.statusChanged.emit("Rendering preview...")
-        self.render_saved_preview()
+        if async_preview:
+            self.request_preview_render(immediate=True)
+        else:
+            self.render_saved_preview()
         return True
 
     def current_display_image(self) -> CanonicalImage | None:
@@ -867,7 +870,9 @@ class ProjectEditorViewModel(QObject):
         if rule is not None:
             self._configure_colour_selection_from_sample(rule, sampled_rgb)
         self.finish_sampling()
-        self._after_metadata_change(render=True)
+        self._after_metadata_change(render=False)
+        self.statusChanged.emit("Rendering preview...")
+        self.request_preview_render(immediate=False)
         point_label = summary.point_label or "Colour Point"
         self.statusChanged.emit(f"{point_label} updated from the image.")
 
@@ -1318,6 +1323,8 @@ class ProjectEditorViewModel(QObject):
         if job_id != self._active_job_id:
             return False
         self._current_preview = result
+        if not self._dirty:
+            self._saved_preview = result
         self._finish_preview_render("Preview updated.")
         self.previewChanged.emit()
         return True

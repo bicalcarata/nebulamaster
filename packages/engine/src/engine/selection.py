@@ -117,7 +117,12 @@ def saturation_weight(
 ) -> np.ndarray:
     channel_max = np.max(image_rgb, axis=-1)
     channel_min = np.min(image_rgb, axis=-1)
-    saturation = np.where(channel_max > 0.0, (channel_max - channel_min) / channel_max, 0.0)
+    saturation = np.divide(
+        channel_max - channel_min,
+        channel_max,
+        out=np.zeros_like(channel_max, dtype=np.float32),
+        where=channel_max > 0.0,
+    )
     return brightness_weight(saturation.astype(np.float32), minimum, maximum, softness)
 
 
@@ -295,25 +300,23 @@ def box_blur(image_rgb: np.ndarray, radius_pixels: int) -> np.ndarray:
     if radius_pixels <= 0:
         return image_rgb.astype(np.float32, copy=True)
 
-    height, width, _ = image_rgb.shape
     padded = np.pad(
         image_rgb,
         ((radius_pixels, radius_pixels), (radius_pixels, radius_pixels), (0, 0)),
         mode="edge",
+    ).astype(np.float32, copy=False)
+    window_size = (radius_pixels * 2) + 1
+
+    integral = padded.cumsum(axis=0, dtype=np.float32).cumsum(axis=1, dtype=np.float32)
+    integral = np.pad(integral, ((1, 0), (1, 0), (0, 0)), mode="constant")
+
+    window_sum = (
+        integral[window_size:, window_size:]
+        - integral[:-window_size, window_size:]
+        - integral[window_size:, :-window_size]
+        + integral[:-window_size, :-window_size]
     )
-    accum = np.zeros((height, width, 3), dtype=np.float32)
-    samples = 0
-
-    for dy in range(-radius_pixels, radius_pixels + 1):
-        y_start = radius_pixels + dy
-        y_end = y_start + height
-        for dx in range(-radius_pixels, radius_pixels + 1):
-            x_start = radius_pixels + dx
-            x_end = x_start + width
-            accum += padded[y_start:y_end, x_start:x_end]
-            samples += 1
-
-    blurred = (accum / float(samples)).astype(np.float32, copy=False)
+    blurred = (window_sum / float(window_size * window_size)).astype(np.float32, copy=False)
     return np.asarray(blurred, dtype=np.float32)
 
 

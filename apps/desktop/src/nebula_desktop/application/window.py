@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_signals()
         if project_path is not None:
-            self.view_model.open_project(project_path)
+            self.view_model.open_project(project_path, async_preview=True)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -564,7 +564,7 @@ class MainWindow(QMainWindow):
             "Nebula Project (project.yaml);;YAML Files (*.yaml *.yml)",
         )
         if selected:
-            self.view_model.open_project(Path(selected))
+            self.view_model.open_project(Path(selected), async_preview=True)
 
     def _new_project_from_image_dialog(self) -> None:
         source_path, _filter = QFileDialog.getOpenFileName(
@@ -615,7 +615,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.view_model.open_project(project_file)
+        self.view_model.open_project(project_file, async_preview=True)
 
     def _ensure_project_open(self) -> bool:
         if self.view_model.project_path is not None:

@@ -572,6 +572,13 @@ def test_overlay_off_clears_immediately_and_stays_cleared_after_brightness_reren
 
     window._on_primary_value_changed(100.0)
 
+    qtbot.waitUntil(
+        lambda: (
+            (after := window.view_model.current_display_image()) is not None
+            and not np.allclose(before_data, after.data, atol=1e-6)
+        ),
+        timeout=1000,
+    )
     after = window.view_model.current_display_image()
     assert after is not None
     assert window.preview_widget.semantic_overlay() is None
@@ -1089,6 +1096,29 @@ def test_existing_pick_point_behaviour_still_updates_selected_colour_point(
     assert red >= blue
 
 
+def test_colour_point_sampling_requests_deferred_preview_render(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    view_model.select_adjustment("red")
+    view_model.begin_sampling()
+
+    render_requests: list[bool] = []
+
+    def record_render(*, immediate: bool = False) -> None:
+        render_requests.append(immediate)
+
+    monkeypatch.setattr(view_model, "request_preview_render", record_render)
+
+    view_model.apply_image_sample(ImageSample(x=0, y=0, rgb=(0.7, 0.1, 0.1)))
+
+    assert view_model.is_sampling is False
+    assert render_requests == [False]
+
+
 def test_colour_point_sampling_retargets_brightness_window(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
@@ -1107,6 +1137,33 @@ def test_colour_point_sampling_retargets_brightness_window(tmp_path: Path) -> No
     assert red_rule.match.brightness.max - red_rule.match.brightness.min <= 0.24 + 1e-6
     assert red_rule.match.saturation is not None
     assert red_rule.match.saturation.min >= 0.18
+
+
+def test_window_open_project_uses_async_preview_render(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    calls: list[bool] = []
+    original_open = ProjectEditorViewModel.open_project
+
+    def tracking_open(
+        self: ProjectEditorViewModel,
+        project_path: Path,
+        *,
+        async_preview: bool = False,
+    ) -> bool:
+        calls.append(async_preview)
+        return original_open(self, project_path, async_preview=async_preview)
+
+    monkeypatch.setattr(ProjectEditorViewModel, "open_project", tracking_open)
+
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert calls == [True]
 
 
 def test_colour_adjustment_amount_does_not_cross_below_neutral(tmp_path: Path) -> None:
