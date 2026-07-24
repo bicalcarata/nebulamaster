@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -18,7 +19,7 @@ package_paths = [
     ROOT / "packages" / "versioning" / "src",
 ]
 asset_dir = ROOT / "apps" / "desktop" / "assets"
-icon_file = asset_dir / "nebula-master.icns"
+icon_file = asset_dir / ("nebula-master.icns" if sys.platform == "darwin" else "nebula-master.ico")
 
 entry_script = desktop_src / "nebula_desktop" / "application" / "main.py"
 hiddenimports = sorted(
@@ -66,6 +67,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     exclude_binaries=True,
+    icon=str(icon_file) if icon_file.is_file() else None,
 )
 
 coll = COLLECT(
@@ -78,17 +80,18 @@ coll = COLLECT(
     name=APP_NAME,
 )
 
-app = BUNDLE(
-    coll,
-    name=f"{APP_NAME}.app",
-    icon=str(icon_file),
-    bundle_identifier="com.bicalcarata.nebulamaster",
-    info_plist={
-        "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME,
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "0.1.0",
-        "LSMinimumSystemVersion": "13.0",
-        "NSHighResolutionCapable": True,
-    },
-)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=str(icon_file),
+        bundle_identifier="com.bicalcarata.nebulamaster",
+        info_plist={
+            "CFBundleName": APP_NAME,
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleVersion": "0.1.0",
+            "LSMinimumSystemVersion": "13.0",
+            "NSHighResolutionCapable": True,
+        },
+    )

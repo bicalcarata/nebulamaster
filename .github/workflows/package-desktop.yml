@@ -29,7 +29,7 @@ jobs:
         run: uv sync --dev
 
       - name: Build macOS desktop bundle
-        run: make package-desktop
+        run: uv run python scripts/package_desktop.py
 
       - name: Upload desktop packaging artifacts
         uses: actions/upload-artifact@v4
@@ -47,7 +47,48 @@ jobs:
         run: |
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
           gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
-          gh release upload "${GITHUB_REF_NAME}" \
-            "dist/NebulaMaster.app.zip" \
-            "dist/NebulaMaster.dmg" \
-            --clobber
+          files=("dist/NebulaMaster.app.zip")
+          if [[ -f "dist/NebulaMaster.dmg" ]]; then
+            files+=("dist/NebulaMaster.dmg")
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+
+  package-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Sync workspace dependencies
+        run: uv sync --dev
+
+      - name: Build Windows desktop bundle
+        run: uv run python scripts/package_desktop.py
+
+      - name: Upload desktop packaging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nebula-desktop-windows
+          path: |
+            dist/Nebula Master
+            dist/NebulaMaster-windows.zip
+
+      - name: Upload Windows release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${env:GITHUB_REF_NAME}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "${env:GITHUB_REF_NAME}" --title "${env:GITHUB_REF_NAME}" --generate-notes
+          }
+          gh release upload "${env:GITHUB_REF_NAME}" "dist/NebulaMaster-windows.zip" --clobber

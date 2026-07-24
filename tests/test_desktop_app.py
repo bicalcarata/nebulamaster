@@ -703,6 +703,152 @@ def test_stale_preview_results_do_not_overwrite_newer_results(tmp_path: Path) ->
     assert view_model.apply_preview_result(4, second) is True
 
 
+def test_preview_requests_coalesce_while_render_is_in_flight(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    started_job_ids: list[int] = []
+
+    def start_worker(worker: Any) -> None:
+        started_job_ids.append(worker.job_id)
+
+    monkeypatch.setattr(view_model._thread_pool, "start", start_worker)
+
+    view_model.request_preview_render(immediate=True)
+    assert started_job_ids == [1]
+    assert view_model._preview_render_in_flight is True
+
+    view_model.request_preview_render(immediate=True)
+    assert started_job_ids == [1]
+    assert view_model._pending_preview_render is True
+
+    preview = view_model._current_preview
+    assert preview is not None
+    assert view_model.apply_preview_result(1, preview) is True
+
+    assert started_job_ids == [1, 2]
+    assert view_model._preview_render_in_flight is True
+    assert view_model._pending_preview_render is False
+
+
+def test_save_changes_does_not_force_foreground_preview_render(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    selected = view_model.selected_rule()
+    assert selected is not None
+    view_model.set_rule_amount(selected.amount + 0.1)
+
+    def fail_render(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("save_changes should not force a preview render")
+
+    monkeypatch.setattr(
+        "nebula_desktop.viewmodels.project_editor.render_preview_image",
+        fail_render,
+    )
+
+    assert view_model.save_changes() is True
+
+
+def test_primary_adjustment_input_updates_without_immediate_render(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    recorded: list[tuple[float, bool]] = []
+
+    def record_primary(value: float, *, render: bool = True) -> None:
+        recorded.append((value, render))
+
+    monkeypatch.setattr(window.view_model, "set_selected_adjustment_primary_value", record_primary)
+
+    window._on_primary_value_changed(20.0)
+
+    assert recorded
+    assert recorded[-1][1] is False
+
+
+def test_secondary_slider_defers_render_until_release(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("smoothness")
+    created_id = window.view_model.selected_adjustment_id
+    assert created_id is not None
+    window.view_model.select_adjustment(created_id)
+
+    recorded_secondary: list[tuple[float, bool]] = []
+    render_requests: list[bool] = []
+
+    def record_secondary(value: float, *, render: bool = True) -> None:
+        recorded_secondary.append((value, render))
+
+    def record_render(*, immediate: bool = False) -> None:
+        render_requests.append(immediate)
+
+    monkeypatch.setattr(
+        window.view_model,
+        "set_selected_adjustment_secondary_value",
+        record_secondary,
+    )
+    monkeypatch.setattr(window.view_model, "request_preview_render", record_render)
+
+    window._on_adjustment_slider_pressed()
+    assert window.view_model.is_adjustment_interacting is True
+
+    window._on_secondary_value_changed(55)
+    assert recorded_secondary[-1] == (0.55, False)
+    assert render_requests == []
+
+    window._on_adjustment_slider_released()
+    assert window.view_model.is_adjustment_interacting is False
+    assert render_requests == [False]
+
+
+def test_numeric_adjustment_render_is_debounced(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    render_requests: list[bool] = []
+
+    def record_render(*, immediate: bool = False) -> None:
+        render_requests.append(immediate)
+
+    monkeypatch.setattr(window.view_model, "request_preview_render", record_render)
+
+    window._schedule_adjustment_render()
+    window._schedule_adjustment_render()
+    window._schedule_adjustment_render()
+
+    qtbot.waitUntil(lambda: len(render_requests) == 1, timeout=1000)
+    assert render_requests == [False]
+
+
 def test_create_adjustment_selection_mode_can_be_cancelled(
     qtbot: Any,
     tmp_path: Path,

@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "apps" / "desktop" / "assets"
 ICON_PNG = ASSETS_DIR / "nebula-master-icon.png"
+ICON_ICO = ASSETS_DIR / "nebula-master.ico"
 
 
 def _clamp_channel(value: float) -> int:
@@ -175,9 +176,15 @@ def build_icon() -> Path:
     mask_draw.rounded_rectangle((0, 0, 1024, 1024), radius=228, fill=255)
     rounded.paste(canvas, mask=mask)
     rounded.save(ICON_PNG)
+    rounded.save(
+        ICON_ICO,
+        format="ICO",
+        sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)],
+    )
     return ICON_PNG
 
 
 if __name__ == "__main__":
     path = build_icon()
     print(path)
+    print(ICON_ICO)

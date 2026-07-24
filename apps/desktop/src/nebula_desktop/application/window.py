@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 from project_model import PrintRenderProfile, ScreenRenderProfile
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -81,6 +81,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Nebula Master Desktop")
         self._initial_size_applied = False
+        self._adjustment_render_timer = QTimer(self)
+        self._adjustment_render_timer.setSingleShot(True)
+        self._adjustment_render_timer.setInterval(300)
+        self._adjustment_render_timer.timeout.connect(self._request_deferred_adjustment_render)
         self.view_model = ProjectEditorViewModel(self)
         self._build_ui()
         self._connect_signals()
@@ -529,10 +533,14 @@ class MainWindow(QMainWindow):
         self.adjustment_enabled_checkbox.toggled.connect(self.view_model.set_selected_adjustment_enabled)
         self.target_selector.currentIndexChanged.connect(self._on_target_changed)
         self.primary_input.valueChanged.connect(self._on_primary_value_changed)
+        self.primary_input.editingFinished.connect(self._schedule_adjustment_render)
         for index, input_widget in enumerate(self.level_inputs):
             input_widget.valueChanged.connect(
                 lambda value, level_index=index: self._on_level_value_changed(level_index, value)
             )
+            input_widget.editingFinished.connect(self._schedule_adjustment_render)
+        self.secondary_slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
+        self.secondary_slider.sliderReleased.connect(self._on_adjustment_slider_released)
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
         self.region_scope_list.itemChanged.connect(self._on_region_scope_item_changed)
@@ -1190,13 +1198,19 @@ class MainWindow(QMainWindow):
             normalized = _brightness_ui_to_amount(value)
         else:
             normalized = 1.0 + (value / 100.0)
-        self.view_model.set_selected_adjustment_primary_value(normalized)
+        self.view_model.set_selected_adjustment_primary_value(normalized, render=False)
+        self._schedule_adjustment_render()
 
     def _on_level_value_changed(self, index: int, value: float) -> None:
         summary = self.view_model.selected_adjustment_summary()
         if summary is None or not summary.level_values:
             return
-        self.view_model.set_selected_adjustment_level_value(index, _brightness_ui_to_amount(value))
+        self.view_model.set_selected_adjustment_level_value(
+            index,
+            _brightness_ui_to_amount(value),
+            render=False,
+        )
+        self._schedule_adjustment_render()
 
     def _on_target_changed(self, index: int) -> None:
         if index < 0:
@@ -1206,7 +1220,28 @@ class MainWindow(QMainWindow):
             self.view_model.set_selected_adjustment_target(target_id)
 
     def _on_secondary_value_changed(self, value: int) -> None:
-        self.view_model.set_selected_adjustment_secondary_value(value / 100.0)
+        render = not self.view_model.is_adjustment_interacting
+        self.view_model.set_selected_adjustment_secondary_value(value / 100.0, render=render)
+        if render:
+            self._schedule_adjustment_render()
+
+    def _on_adjustment_slider_pressed(self) -> None:
+        self._adjustment_render_timer.stop()
+        self.view_model.set_adjustment_interaction_active(True)
+
+    def _on_adjustment_slider_released(self) -> None:
+        self.view_model.set_adjustment_interaction_active(False)
+        self.view_model.request_preview_render(immediate=False)
+
+    def _schedule_adjustment_render(self) -> None:
+        if self.view_model.is_adjustment_interacting:
+            return
+        self._adjustment_render_timer.start()
+
+    def _request_deferred_adjustment_render(self) -> None:
+        if self.view_model.is_adjustment_interacting:
+            return
+        self.view_model.request_preview_render(immediate=False)
 
     def _on_region_scope_item_changed(self, item: QListWidgetItem) -> None:
         summary = self.view_model.selected_adjustment_summary()

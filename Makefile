@@ -21,4 +21,4 @@ container-build:
 	docker build -f apps/renderer-cli/Dockerfile -t nebula-renderer-cli .
 
 package-desktop:
-	bash scripts/package_desktop.sh
+	./.venv/bin/python scripts/package_desktop.py

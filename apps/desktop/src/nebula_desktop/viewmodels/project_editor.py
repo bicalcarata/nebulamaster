@@ -327,12 +327,16 @@ class ProjectEditorViewModel(QObject):
         self._show_regions = True
         self._semantic_overlay_mode: SemanticOverlaySelection = "off"
         self._dirty = False
+        self._is_adjustment_interacting = False
         self._active_job_id = 0
         self._thread_pool = QThreadPool(self)
+        self._thread_pool.setMaxThreadCount(1)
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(180)
         self._debounce_timer.timeout.connect(self._launch_preview_render)
+        self._preview_render_in_flight = False
+        self._pending_preview_render = False
 
     @property
     def project_path(self) -> Path | None:
@@ -473,6 +477,10 @@ class ProjectEditorViewModel(QObject):
     def is_drawing_region(self) -> bool:
         return self._is_drawing_region
 
+    @property
+    def is_adjustment_interacting(self) -> bool:
+        return self._is_adjustment_interacting
+
     def open_project(self, project_path: Path) -> bool:
         report = validate_project(project_path)
         if not report.valid:
@@ -500,6 +508,10 @@ class ProjectEditorViewModel(QObject):
         self._selected_region_id = self._first_region_id()
         self._selection_kind = "adjustment" if self._selected_adjustment_id else "region"
         self._source_image = self._load_reference_source(bundle)
+        self._active_job_id = 0
+        self._preview_render_in_flight = False
+        self._pending_preview_render = False
+        self._debounce_timer.stop()
         self._set_dirty(False)
         self.projectLoaded.emit(bundle.project.project.name)
         self.sourceChanged.emit()
@@ -967,7 +979,10 @@ class ProjectEditorViewModel(QObject):
         rule.enabled = enabled
         self._after_metadata_change(render=True)
 
-    def set_selected_adjustment_primary_value(self, value: float) -> None:
+    def set_adjustment_interaction_active(self, active: bool) -> None:
+        self._is_adjustment_interacting = active
+
+    def set_selected_adjustment_primary_value(self, value: float, *, render: bool = True) -> None:
         rule = self._selected_rule_model()
         if rule is None:
             return
@@ -986,17 +1001,23 @@ class ProjectEditorViewModel(QObject):
             transform.strength = max(0.0, min(1.0, value))
         else:
             return
-        self._after_metadata_change(render=True)
+        self._after_metadata_change(render=render)
 
-    def set_selected_adjustment_secondary_value(self, value: float) -> None:
+    def set_selected_adjustment_secondary_value(self, value: float, *, render: bool = True) -> None:
         rule = self._selected_rule_model()
         if rule is None:
             return
         if isinstance(rule.transform, ColourSmoothingTransform):
             rule.transform.radius = value
-            self._after_metadata_change(render=True)
+            self._after_metadata_change(render=render)
 
-    def set_selected_adjustment_level_value(self, index: int, value: float) -> None:
+    def set_selected_adjustment_level_value(
+        self,
+        index: int,
+        value: float,
+        *,
+        render: bool = True,
+    ) -> None:
         rule = self._selected_rule_model()
         if rule is None or not isinstance(rule.transform, LevelsTransform):
             return
@@ -1013,7 +1034,7 @@ class ProjectEditorViewModel(QObject):
             rule.transform.brightest = clamped
         else:
             return
-        self._after_metadata_change(render=True)
+        self._after_metadata_change(render=render)
 
     def set_selected_adjustment_apply_everywhere(self, apply_everywhere: bool) -> None:
         rule = self._selected_rule_model()
@@ -1244,11 +1265,6 @@ class ProjectEditorViewModel(QObject):
         if self._working_documents is None or self._saved_documents is None:
             return False
         try:
-            render_preview_image(
-                self._working_documents.bundle.model_copy(deep=True),
-                include_provenance=False,
-                use_cached_sources=True,
-            )
             self._write_project_metadata(self._working_documents, self._saved_documents)
         except Exception as exc:  # pragma: no cover
             self.errorRaised.emit(
@@ -1258,7 +1274,8 @@ class ProjectEditorViewModel(QObject):
             return False
 
         self._saved_documents = self._working_documents.clone()
-        self._saved_preview = self._current_preview
+        if self._current_preview is not None:
+            self._saved_preview = self._current_preview
         self._set_dirty(False)
         self.changesChanged.emit()
         self.statusChanged.emit("Project metadata saved.")
@@ -1267,7 +1284,11 @@ class ProjectEditorViewModel(QObject):
     def request_preview_render(self, *, immediate: bool = False) -> None:
         if self._working_documents is None:
             return
+        if self._preview_render_in_flight:
+            self._pending_preview_render = True
+            return
         if immediate:
+            self._debounce_timer.stop()
             self._launch_preview_render()
             return
         self._debounce_timer.start()
@@ -1295,15 +1316,14 @@ class ProjectEditorViewModel(QObject):
         if job_id != self._active_job_id:
             return False
         self._current_preview = result
-        self.busyChanged.emit(False)
-        self.statusChanged.emit("Preview updated.")
+        self._finish_preview_render("Preview updated.")
         self.previewChanged.emit()
         return True
 
     def handle_preview_failure(self, job_id: int, message: str, details: str) -> None:
         if job_id != self._active_job_id:
             return
-        self.busyChanged.emit(False)
+        self._finish_preview_render("Preview failed.")
         self.errorRaised.emit(
             "The preview could not be created. Your project has not been changed.",
             f"{message}\n{details}",
@@ -1325,15 +1345,17 @@ class ProjectEditorViewModel(QObject):
         self.regionsChanged.emit()
         self.changesChanged.emit()
         self.previewChanged.emit()
-        if render:
+        if render and not self._is_adjustment_interacting:
             self.statusChanged.emit("Rendering preview...")
             self.request_preview_render()
 
     def _launch_preview_render(self) -> None:
-        if self._working_documents is None:
+        if self._working_documents is None or self._preview_render_in_flight:
             return
+        self._pending_preview_render = False
         self._active_job_id += 1
         job_id = self._active_job_id
+        self._preview_render_in_flight = True
         self.busyChanged.emit(True)
         worker = PreviewRenderWorker(
             job_id=job_id,
@@ -1343,6 +1365,14 @@ class ProjectEditorViewModel(QObject):
         worker.signals.completed.connect(self.apply_preview_result)
         worker.signals.failed.connect(self.handle_preview_failure)
         self._thread_pool.start(worker)
+
+    def _finish_preview_render(self, status_message: str) -> None:
+        self._preview_render_in_flight = False
+        self.busyChanged.emit(False)
+        self.statusChanged.emit(status_message)
+        if self._pending_preview_render:
+            self.statusChanged.emit("Rendering preview...")
+            self._launch_preview_render()
 
     def _raise_validation_error(self, report: ValidationReport) -> None:
         issue = report.issues[0] if report.issues else None

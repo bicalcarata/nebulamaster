@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DIST_DIR = ROOT_DIR / "dist"
+BUILD_DIR = ROOT_DIR / "build" / "pyinstaller"
+PYINSTALLER_CONFIG_DIR = ROOT_DIR / "build" / "pyinstaller-config"
+DMG_STAGE_DIR = ROOT_DIR / "build" / "dmg-stage"
+ICONSET_DIR = ROOT_DIR / "build" / "nebula-master.iconset"
+SPEC_PATH = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula_master.spec"
+ASSETS_DIR = ROOT_DIR / "apps" / "desktop" / "assets"
+ICON_PNG = ASSETS_DIR / "nebula-master-icon.png"
+ICON_ICNS = ASSETS_DIR / "nebula-master.icns"
+APP_NAME = "Nebula Master"
+
+
+class PackagingError(RuntimeError):
+    pass
+
+
+def _run(*args: str, env: dict[str, str] | None = None) -> None:
+    completed = subprocess.run(
+        list(args),
+        cwd=ROOT_DIR,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip() or "Command failed."
+        raise PackagingError(message)
+
+
+def _clean_path(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    elif path.exists():
+        path.unlink()
+
+
+def _build_icons() -> None:
+    _run(sys.executable, str(ROOT_DIR / "scripts" / "build_app_icon.py"))
+
+
+def _build_macos_icns() -> None:
+    ICONSET_DIR.mkdir(parents=True, exist_ok=True)
+    icon_sizes = (
+        ("icon_16x16.png", 16),
+        ("icon_16x16@2x.png", 32),
+        ("icon_32x32.png", 32),
+        ("icon_32x32@2x.png", 64),
+        ("icon_128x128.png", 128),
+        ("icon_128x128@2x.png", 256),
+        ("icon_256x256.png", 256),
+        ("icon_256x256@2x.png", 512),
+        ("icon_512x512.png", 512),
+    )
+    for filename, size in icon_sizes:
+        _run(
+            "sips",
+            "-z",
+            str(size),
+            str(size),
+            str(ICON_PNG),
+            "--out",
+            str(ICONSET_DIR / filename),
+        )
+    shutil.copy2(ICON_PNG, ICONSET_DIR / "icon_512x512@2x.png")
+    try:
+        _run("iconutil", "-c", "icns", str(ICONSET_DIR), "-o", str(ICON_ICNS))
+    except PackagingError:
+        if ICON_ICNS.is_file():
+            print(f"Warning: iconutil rejected regenerated iconset; using existing {ICON_ICNS}.")
+            return
+        raise
+
+
+def _run_pyinstaller() -> None:
+    env = os.environ.copy()
+    env["PYINSTALLER_CONFIG_DIR"] = str(PYINSTALLER_CONFIG_DIR)
+    _run(
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--distpath",
+        str(DIST_DIR),
+        "--workpath",
+        str(BUILD_DIR),
+        str(SPEC_PATH),
+        env=env,
+    )
+
+
+def _package_macos() -> list[Path]:
+    app_bundle_path = DIST_DIR / f"{APP_NAME}.app"
+    zip_path = DIST_DIR / "NebulaMaster.app.zip"
+    dmg_path = DIST_DIR / "NebulaMaster.dmg"
+    _clean_path(app_bundle_path)
+    _clean_path(zip_path)
+    _clean_path(dmg_path)
+    _clean_path(BUILD_DIR)
+    _clean_path(DMG_STAGE_DIR)
+    _clean_path(ICONSET_DIR)
+    _build_icons()
+    _build_macos_icns()
+    _run_pyinstaller()
+    _run(
+        "ditto",
+        "-c",
+        "-k",
+        "--sequesterRsrc",
+        "--keepParent",
+        str(app_bundle_path),
+        str(zip_path),
+    )
+    DMG_STAGE_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(app_bundle_path, DMG_STAGE_DIR / app_bundle_path.name)
+    artifacts = [app_bundle_path, zip_path]
+    try:
+        _run(
+            "hdiutil",
+            "create",
+            "-volname",
+            APP_NAME,
+            "-srcfolder",
+            str(DMG_STAGE_DIR),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(dmg_path),
+        )
+    except PackagingError:
+        print(
+            "Warning: hdiutil could not create a DMG in this environment; "
+            "app and zip were built."
+        )
+    else:
+        artifacts.append(dmg_path)
+    return artifacts
+
+
+def _package_windows() -> list[Path]:
+    app_dir = DIST_DIR / APP_NAME
+    zip_base = DIST_DIR / "NebulaMaster-windows"
+    zip_path = DIST_DIR / "NebulaMaster-windows.zip"
+    _clean_path(app_dir)
+    _clean_path(zip_path)
+    _clean_path(BUILD_DIR)
+    _build_icons()
+    _run_pyinstaller()
+    archive = shutil.make_archive(str(zip_base), "zip", root_dir=DIST_DIR, base_dir=APP_NAME)
+    if Path(archive) != zip_path:
+        _clean_path(zip_path)
+        Path(archive).rename(zip_path)
+    return [app_dir, zip_path]
+
+
+def main() -> int:
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    PYINSTALLER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    system = platform.system()
+    if system == "Darwin":
+        artifacts = _package_macos()
+    elif system == "Windows":
+        artifacts = _package_windows()
+    else:
+        raise PackagingError("Desktop packaging currently supports macOS and Windows only.")
+
+    print("Built:")
+    for artifact in artifacts:
+        print(f"  {artifact}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -153,6 +153,17 @@ Print export supports:
 
 Export remains declarative in the same sense as preview rendering: the output file is generated from immutable sources and project metadata and is not fed back into project state.
 
+## Platform Support
+
+The desktop runtime is written against cross-platform Python and Qt APIs.
+
+Current packaging support:
+
+- macOS native bundle packaging through PyInstaller, `.app`, `.zip`, and `.dmg`
+- Windows native packaging through PyInstaller, a packaged app directory, and a distributable `.zip`
+
+The current repository does not require a macOS-only code path to run the desktop itself. Platform-specific behavior is isolated to packaging and icon generation.
+
 ## Current Limitations
 
 - YAML comments are not preserved yet because the current loader uses `PyYAML`.
