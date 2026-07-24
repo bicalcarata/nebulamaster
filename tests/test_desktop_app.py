@@ -187,6 +187,35 @@ def test_new_project_dialog_scaffolds_and_opens_project(
     assert window.project_name_label.text() == "Lion Blue Pass"
 
 
+def test_first_adjustment_switches_editor_from_region_to_adjustment(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.tiff"
+    _create_source_image(source_path)
+    parent_dir = tmp_path / "library"
+    parent_dir.mkdir()
+    project_file = scaffold_project_from_image(
+        source_path=source_path,
+        destination_parent=parent_dir,
+        project_name="First Adjustment Test",
+    )
+
+    window = MainWindow(project_file.parent)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.editor_stack.currentIndex() == 1
+
+    window.view_model.create_adjustment("red")
+
+    assert window.view_model.selected_adjustment_id is not None
+    assert window.editor_stack.currentIndex() == 0
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Red"
+
+
 def test_invalid_project_raises_readable_error(qtbot: Any, tmp_path: Path) -> None:
     _ = qtbot
     _ = tmp_path

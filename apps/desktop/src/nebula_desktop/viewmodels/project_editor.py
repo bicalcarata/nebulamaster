@@ -886,6 +886,7 @@ class ProjectEditorViewModel(QObject):
             self._working_documents.bundle.project.rules.insert(insert_index + 1, rule)
         self._selected_adjustment_id = rule.id
         self._selection_kind = "adjustment"
+        self.selectionChanged.emit("adjustment")
         self._after_metadata_change(render=True)
 
     def create_adjustment_from_selection(
@@ -919,6 +920,7 @@ class ProjectEditorViewModel(QObject):
         self._working_documents.bundle.project.rules.append(rule)
         self._selected_adjustment_id = rule.id
         self._selection_kind = "adjustment"
+        self.selectionChanged.emit("adjustment")
         self._after_metadata_change(render=True)
         self.statusChanged.emit(f'{rule_name} was created from the selected image feature.')
         return rule.id
