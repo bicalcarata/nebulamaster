@@ -86,19 +86,21 @@ The UI is a visual authoring environment for declarative intent.
 Users work through:
 
 - Image preview
-- Sliders
+- Numeric adjustment controls
 - Colour points
 - Polygon regions
 - Before/after comparison
+- Semantic targets
 - Helper text
 
-The UI should not expose graphs such as histograms, curves, waveforms, or channel plots. Controls should describe perceptual outcomes in human language, such as:
+The UI does not expose histograms, curves, waveforms, or channel plots. Controls describe visible outcomes in human language, such as:
 
 - Nebula Blue Point
 - Star Blue Point
-- Behind Dust Brightness
 - Background Darkness
 - Star Presence
+- Black Point
+- Levels
 
 The UI generates the underlying query rules automatically.
 
@@ -202,14 +204,88 @@ The current repository includes:
 Current desktop mastering controls include:
 
 - Colour adjustments for Blue, Red, Green, Cyan, and Yellow
-- Tonal adjustments for Brightness, Saturation, Black Point, and Shadows
+- Tonal adjustments for Brightness, Saturation, Black Point, Shadows, and five-band Levels
 - Colour smoothing
 - Semantic targets for Combined Image, Nebula, and Stars
 - Polygon region scoping
 - Image-driven colour-point sampling and adjustment creation
 - Screen and print export using the shared renderer
+- A packaged macOS desktop application with a Nebula Master app icon
 
 The desktop preview can also show star and nebula diagnostic overlays so the user can see the current semantic split before applying adjustments.
+
+## Desktop Overview
+
+The current desktop app is a working authoring environment for real projects. Adjustments are ordered, target-aware, and non-destructive.
+
+![Nebula Master desktop preview](docs/images/readme/desktop-main.png)
+
+The adjustment stack is declaration-ordered and shows what each adjustment affects:
+
+- `Black Point` for deeper dark tones
+- `Levels` for five tonal bands from darkest to brightest
+- Colour adjustments targeted at `Nebula`, `Stars`, or `Combined Image`
+- Multiple brightness and colour adjustments in a deterministic stack
+
+![Adjustment stack](docs/images/readme/adjustment-stack.png)
+
+Current desktop workflows include:
+
+- Create a new project from a TIFF, PNG, or JPEG source image
+- Open and edit declarative projects
+- Target adjustments at `Nebula`, `Stars`, or `Combined Image`
+- Pick colour points directly from the image
+- Create adjustments from image selections
+- Draw polygon regions and scope adjustments to them
+- Preview semantic star and nebula overlays
+- Keep semantic unsaved-change history
+
+## Current Adjustment Types
+
+The desktop currently supports these editable adjustment types:
+
+- Black Point
+- Levels
+- Shadows
+- Brightness
+- Saturation
+- Blue
+- Red
+- Green
+- Cyan
+- Yellow
+- Colour Smoothness
+
+Levels is implemented as a five-band tonal adjustment with explicit controls for:
+
+- Darkest
+- Dark
+- Mid
+- Light
+- Brightest
+
+## Export
+
+Final exports render through the shared engine rather than through a desktop-only path.
+
+Screen export currently supports:
+
+- PNG
+- JPEG
+- TIFF
+- Native-size or upscaled output
+- `Preserve pixels` upscale mode for mapping the mastered image onto a larger pixel grid without inventing new detail
+
+Print export currently supports:
+
+- PNG
+- JPEG
+- TIFF
+- Physical dimensions
+- DPI / PPI targeting
+- Shared-renderer output planning
+
+![Screen export dialog](docs/images/readme/export-screen-dialog.png)
 
 ## Local Packaging
 
@@ -234,7 +310,11 @@ Artifacts are written to `dist/`:
 - `dist/NebulaMaster.app.zip`
 - `dist/NebulaMaster.dmg`
 
-The packaging entrypoint is [scripts/package_desktop.sh](/Users/damon/gitlab/nebulamaster/scripts/package_desktop.sh), which builds the app via PyInstaller using [apps/desktop/packaging/nebula_master.spec](/Users/damon/gitlab/nebulamaster/apps/desktop/packaging/nebula_master.spec).
+The packaging entrypoint is [scripts/package_desktop.sh](/Users/damon/gitlab/nebulamaster/scripts/package_desktop.sh), which:
+
+- builds the app via PyInstaller using [apps/desktop/packaging/nebula_master.spec](/Users/damon/gitlab/nebulamaster/apps/desktop/packaging/nebula_master.spec)
+- generates the bundled Nebula Master application icon from [scripts/build_app_icon.py](/Users/damon/gitlab/nebulamaster/scripts/build_app_icon.py)
+- embeds the icon and desktop assets into the packaged `.app`
 
 ## CI And Releases
 

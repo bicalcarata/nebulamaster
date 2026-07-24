@@ -17,6 +17,8 @@ package_paths = [
     ROOT / "packages" / "project-model" / "src",
     ROOT / "packages" / "versioning" / "src",
 ]
+asset_dir = ROOT / "apps" / "desktop" / "assets"
+icon_file = asset_dir / "nebula-master.icns"
 
 entry_script = desktop_src / "nebula_desktop" / "application" / "main.py"
 hiddenimports = sorted(
@@ -35,7 +37,7 @@ a = Analysis(
     [str(entry_script)],
     pathex=[str(path) for path in package_paths],
     binaries=[],
-    datas=[],
+    datas=[(str(asset_dir), "assets")],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -79,7 +81,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name=f"{APP_NAME}.app",
-    icon=None,
+    icon=str(icon_file),
     bundle_identifier="com.bicalcarata.nebulamaster",
     info_plist={
         "CFBundleName": APP_NAME,
