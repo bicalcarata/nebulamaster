@@ -210,3 +210,43 @@ Current desktop mastering controls include:
 - Screen and print export using the shared renderer
 
 The desktop preview can also show star and nebula diagnostic overlays so the user can see the current semantic split before applying adjustments.
+
+## Local Packaging
+
+The desktop application can be packaged locally as a standalone macOS app bundle plus release artifacts.
+
+Prerequisites:
+
+- macOS
+- Python 3.13
+- Synced workspace dependencies with `uv`
+
+Build steps:
+
+```bash
+uv sync --dev
+make package-desktop
+```
+
+Artifacts are written to `dist/`:
+
+- `dist/Nebula Master.app`
+- `dist/NebulaMaster.app.zip`
+- `dist/NebulaMaster.dmg`
+
+The packaging entrypoint is [scripts/package_desktop.sh](/Users/damon/gitlab/nebulamaster/scripts/package_desktop.sh), which builds the app via PyInstaller using [apps/desktop/packaging/nebula_master.spec](/Users/damon/gitlab/nebulamaster/apps/desktop/packaging/nebula_master.spec).
+
+## CI And Releases
+
+The repository includes two GitHub Actions workflows:
+
+- [.github/workflows/ci.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/ci.yml) runs `ruff`, `mypy`, and `pytest` on pushes to `main` and on pull requests.
+- [.github/workflows/package-desktop.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/package-desktop.yml) builds the standalone macOS desktop package on demand and on version tags.
+
+Release flow:
+
+1. Push a version tag such as `v0.1.0`.
+2. GitHub Actions builds the macOS desktop artifacts.
+3. The workflow uploads the `.zip` and `.dmg` files to the matching GitHub Release.
+
+For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.
