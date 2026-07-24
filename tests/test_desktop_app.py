@@ -275,6 +275,108 @@ def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
 
     assert window.colour_title_label.text() == "Red Point"
     assert window.pick_button.text() == "Pick Red Point"
+    assert window.primary_input.suffix() == "%"
+    assert window.primary_input.minimum() == 0.0
+    assert window.primary_input.maximum() == 100.0
+
+
+def test_adjustment_editor_shows_semantic_target_selector(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.target_selector.count() == 3
+    assert window.target_selector.itemText(0) == "Combined Image"
+    assert window.target_selector.itemText(1) == "Nebula"
+    assert window.target_selector.itemText(2) == "Stars"
+
+
+def test_semantic_overlay_mode_exposes_star_mask_from_current_image(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    assert view_model.current_semantic_overlay() is None
+
+    view_model.set_semantic_overlay_mode("stars")
+    overlay = view_model.current_semantic_overlay()
+    display_image = view_model.current_display_image()
+
+    assert overlay is not None
+    assert display_image is not None
+    assert overlay.mode == "stars"
+    assert overlay.mask.shape == (
+        display_image.height,
+        display_image.width,
+    )
+    assert np.isfinite(overlay.mask).all()
+
+    view_model.set_semantic_overlay_mode("nebula")
+    nebula_overlay = view_model.current_semantic_overlay()
+    assert nebula_overlay is not None
+    assert nebula_overlay.mode == "nebula"
+    assert nebula_overlay.mask.shape == overlay.mask.shape
+
+
+def test_semantic_overlay_selector_updates_preview_overlay(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    stars_index = window.semantic_overlay_selector.findData("stars")
+    assert stars_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(stars_index)
+
+    qtbot.waitUntil(
+        lambda: window.preview_widget.semantic_overlay() is not None,
+        timeout=5000,
+    )
+    overlay = window.preview_widget.semantic_overlay()
+    assert overlay is not None
+    assert overlay.mode == "stars"
+    assert window.view_model.semantic_overlay_mode == "stars"
+
+    off_index = window.semantic_overlay_selector.findData("off")
+    assert off_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(off_index)
+    qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is None, timeout=5000)
+
+
+def test_adjustment_target_selector_updates_selected_rule(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    index = window.target_selector.findData("stars")
+    assert index >= 0
+    window.target_selector.setCurrentIndex(index)
+
+    def _selected_target_is_stars() -> bool:
+        summary = window.view_model.selected_adjustment_summary()
+        return summary is not None and summary.target_id == "stars"
+
+    qtbot.waitUntil(
+        _selected_target_is_stars,
+        timeout=5000,
+    )
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.target_label == "Stars"
 
 
 def test_adjustment_editor_hides_colour_controls_for_non_colour_adjustments(
@@ -513,7 +615,18 @@ def test_selected_colour_adjustments_copy_sampled_colour_into_new_point(
             rule.match.colour_point,
         )
         assert colour_point is not None
-        assert colour_point.value.channels == sample.rgb
+        if kind == "red":
+            assert colour_point.value.channels[0] >= colour_point.value.channels[1]
+            assert colour_point.value.channels[0] >= colour_point.value.channels[2]
+        elif kind == "green":
+            assert colour_point.value.channels[1] >= colour_point.value.channels[0]
+            assert colour_point.value.channels[1] >= colour_point.value.channels[2]
+        elif kind in {"blue", "cyan"}:
+            assert colour_point.value.channels[2] >= colour_point.value.channels[0]
+            assert colour_point.value.channels[2] >= colour_point.value.channels[1]
+        elif kind == "yellow":
+            assert colour_point.value.channels[0] >= colour_point.value.channels[2]
+            assert colour_point.value.channels[1] >= colour_point.value.channels[2]
         if kind in {"cyan", "yellow"}:
             assert isinstance(rule.transform, ShiftColourPointTransform)
             assert rule.transform.target_colour_point == {
@@ -601,7 +714,9 @@ def test_existing_pick_point_behaviour_still_updates_selected_colour_point(
     assert working_documents is not None
     colour_point = view_model._find_colour_point(working_documents.bundle, summary.colour_point_id)
     assert colour_point is not None
-    assert colour_point.value.channels == (0.2, 0.3, 0.4)
+    red, green, blue = colour_point.value.channels
+    assert red >= green
+    assert red >= blue
 
 
 def test_colour_point_sampling_retargets_brightness_window(tmp_path: Path) -> None:
@@ -619,7 +734,9 @@ def test_colour_point_sampling_retargets_brightness_window(tmp_path: Path) -> No
     assert red_rule is not None
     assert red_rule.match.brightness is not None
     assert 0.0 <= red_rule.match.brightness.min < red_rule.match.brightness.max <= 1.0
-    assert red_rule.match.brightness.max - red_rule.match.brightness.min <= 0.32 + 1e-6
+    assert red_rule.match.brightness.max - red_rule.match.brightness.min <= 0.24 + 1e-6
+    assert red_rule.match.saturation is not None
+    assert red_rule.match.saturation.min >= 0.18
 
 
 def test_colour_adjustment_amount_does_not_cross_below_neutral(tmp_path: Path) -> None:
@@ -758,11 +875,13 @@ def test_new_blue_and_red_adjustments_use_matching_default_colour_points(tmp_pat
     blue_rule = view_model._selected_rule_model()
     assert blue_rule is not None
     assert blue_rule.match.colour_point == "nebula-blue"
+    assert blue_rule.target == "combined"
 
     view_model.create_adjustment("red")
     red_rule = view_model._selected_rule_model()
     assert red_rule is not None
     assert red_rule.match.colour_point == "nebula-red"
+    assert red_rule.target == "combined"
 
 
 def test_new_green_cyan_and_yellow_adjustments_use_matching_defaults(tmp_path: Path) -> None:
@@ -808,7 +927,7 @@ def test_new_non_colour_adjustments_do_not_default_to_colour_points(tmp_path: Pa
     assert brightness_rule.match.colour_point is None
 
 
-def test_changing_red_adjustment_amount_updates_preview_image(
+def test_changing_colour_adjustment_amount_updates_preview_image(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -816,7 +935,7 @@ def test_changing_red_adjustment_amount_updates_preview_image(
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
     sample = _preview_sample(view_model)
-    created_id = view_model.create_adjustment_from_selection("red", sample)
+    created_id = view_model.create_adjustment_from_selection("blue", sample)
     assert created_id is not None
     before = view_model._current_preview
     assert before is not None

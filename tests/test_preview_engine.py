@@ -101,6 +101,17 @@ def _write_source_image(path: Path, size: tuple[int, int] = (64, 48)) -> None:
     Image.fromarray(data, mode="RGB").save(path, format="PNG")
 
 
+def _write_star_nebula_source_image(path: Path, size: tuple[int, int] = (64, 48)) -> None:
+    width, height = size
+    data = np.zeros((height, width, 3), dtype=np.uint8)
+    data[:, :, :] = [12, 10, 20]
+    data[18:34, 20:48, :] = [35, 28, 90]
+    stars = [(10, 8), (50, 10), (44, 36)]
+    for x, y in stars:
+        data[max(0, y - 1) : y + 2, max(0, x - 1) : x + 2, :] = [255, 255, 255]
+    Image.fromarray(data, mode="RGB").save(path, format="PNG")
+
+
 def test_render_preview_image_can_skip_provenance_hashing(
     monkeypatch: Any,
     tmp_path: Path,
@@ -218,6 +229,25 @@ def _create_project(tmp_path: Path, rules: list[dict[str, Any]]) -> Path:
     project_dir.mkdir(parents=True)
     _write_project(project_dir, _base_project_payload(rules))
     return project_dir
+
+
+def _rule_brightness(
+    *,
+    rule_id: str,
+    name: str,
+    target: str,
+    amount: float = 1.8,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": [],
+        "match": {"softness": 0.5},
+        "transform": {"type": "brightness", "amount": amount},
+    }
 
 
 def test_two_rules_run_in_declaration_order(tmp_path: Path) -> None:
@@ -484,6 +514,7 @@ def test_debug_masks_are_emitted_per_rule(tmp_path: Path) -> None:
     assert (debug_dir / "001-reveal-faint-blue-glow/colour-weight.png").is_file()
     assert (debug_dir / "001-reveal-faint-blue-glow/brightness-weight.png").is_file()
     assert (debug_dir / "001-reveal-faint-blue-glow/region-weight.png").is_file()
+    assert (debug_dir / "001-reveal-faint-blue-glow/target-weight.png").is_file()
     assert (debug_dir / "001-reveal-faint-blue-glow/combined-weight.png").is_file()
     assert (debug_dir / "002-shift-blue-glow/combined-weight.png").is_file()
 
@@ -563,3 +594,66 @@ def test_cli_integration_with_multiple_rules(tmp_path: Path) -> None:
     assert len(payload["execution_trace"]) == 2
     manifest = json.loads(Path(payload["manifest_path"]).read_text(encoding="utf-8"))
     assert manifest["declared_rule_ids"] == ["reveal-faint-blue", "shift-blue-glow"]
+
+
+def test_stars_target_only_affects_star_pixels(tmp_path: Path) -> None:
+    project_dir = tmp_path / "stars-project"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_star_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_brightness(
+                rule_id="dim-stars",
+                name="Dim Stars",
+                target="stars",
+                amount=0.4,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    preview_path = tmp_path / "stars-preview.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+
+    star_pixel_shift = float(preview[8, 10, 0] - source[8, 10, 0])
+    nebula_pixel_shift = float(preview[24, 32, 0] - source[24, 32, 0])
+    background_shift = float(preview[4, 4, 0] - source[4, 4, 0])
+
+    assert star_pixel_shift < -0.05
+    assert abs(nebula_pixel_shift) < 0.02
+    assert abs(background_shift) < 0.02
+
+
+def test_nebula_target_only_affects_diffuse_nebula_pixels(tmp_path: Path) -> None:
+    project_dir = tmp_path / "nebula-project"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_star_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [_rule_brightness(rule_id="lift-nebula", name="Lift Nebula", target="nebula")]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    preview_path = tmp_path / "nebula-preview.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+
+    star_pixel_shift = float(preview[8, 10, 0] - source[8, 10, 0])
+    nebula_pixel_shift = float(preview[24, 32, 0] - source[24, 32, 0])
+    background_shift = float(preview[4, 4, 0] - source[4, 4, 0])
+
+    assert nebula_pixel_shift > 0.05
+    assert star_pixel_shift < 0.02
+    assert background_shift > 0.02

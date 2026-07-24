@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -36,6 +39,7 @@ from nebula_desktop.viewmodels.project_editor import (
     AdjustmentSummary,
     ProjectEditorViewModel,
     RegionSummary,
+    SemanticOverlaySelection,
 )
 from nebula_desktop.views.image_preview import (
     ImagePreviewWidget,
@@ -215,6 +219,10 @@ class MainWindow(QMainWindow):
         self.show_source_button = QToolButton()
         self.show_source_button.setText("Show Source")
         self.show_source_button.setCheckable(True)
+        self.semantic_overlay_selector = QComboBox()
+        self.semantic_overlay_selector.addItem("Overlay: Off", "off")
+        self.semantic_overlay_selector.addItem("Overlay: Stars", "stars")
+        self.semantic_overlay_selector.addItem("Overlay: Nebula", "nebula")
         self.before_after_checkbox = QCheckBox("Before / After")
         self.hold_previous_button = QPushButton("Hold Previous")
         self.fit_button = QPushButton("Fit")
@@ -230,6 +238,7 @@ class MainWindow(QMainWindow):
         for widget in [
             self.show_preview_button,
             self.show_source_button,
+            self.semantic_overlay_selector,
             self.before_after_checkbox,
             self.hold_previous_button,
         ]:
@@ -310,6 +319,10 @@ class MainWindow(QMainWindow):
         self.adjustment_helper_label.setWordWrap(True)
         self.adjustment_helper_label.setStyleSheet("color: #7b8794;")
 
+        self.target_label = QLabel("Affects")
+        self.target_label.setStyleSheet("font-weight: 600;")
+        self.target_selector = QComboBox()
+
         self.colour_title_label = QLabel("Colour Point")
         self.colour_title_label.setStyleSheet("font-weight: 600;")
         point_layout = QHBoxLayout()
@@ -324,10 +337,11 @@ class MainWindow(QMainWindow):
         self.black_point_slider = QSlider(Qt.Orientation.Horizontal)
         self.black_point_value_label = QLabel("")
 
-        self.primary_label = QLabel("Less / More")
+        self.primary_label = QLabel("Amount")
         self.primary_label.setStyleSheet("font-weight: 600;")
-        self.primary_slider = QSlider(Qt.Orientation.Horizontal)
-        self.primary_value_label = QLabel("")
+        self.primary_input = QDoubleSpinBox()
+        self.primary_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
+        self.primary_input.setKeyboardTracking(False)
 
         self.secondary_label = QLabel("Reach")
         self.secondary_label.setStyleSheet("font-weight: 600;")
@@ -343,14 +357,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.adjustment_enabled_checkbox)
         layout.addWidget(self.adjustment_type_label)
         layout.addWidget(self.adjustment_helper_label)
+        layout.addWidget(self.target_label)
+        layout.addWidget(self.target_selector)
         layout.addWidget(self.colour_title_label)
         layout.addLayout(point_layout)
         layout.addWidget(self.black_point_label)
         layout.addWidget(self.black_point_slider)
         layout.addWidget(self.black_point_value_label)
         layout.addWidget(self.primary_label)
-        layout.addWidget(self.primary_slider)
-        layout.addWidget(self.primary_value_label)
+        layout.addWidget(self.primary_input)
         layout.addWidget(self.secondary_label)
         layout.addWidget(self.secondary_slider)
         layout.addWidget(self.secondary_value_label)
@@ -433,6 +448,7 @@ class MainWindow(QMainWindow):
 
         self.show_preview_button.clicked.connect(self._show_preview)
         self.show_source_button.clicked.connect(self._show_source)
+        self.semantic_overlay_selector.currentIndexChanged.connect(self._on_semantic_overlay_changed)
         self.before_after_checkbox.toggled.connect(self.view_model.set_compare_saved)
         self.hold_previous_button.pressed.connect(lambda: self.view_model.set_compare_saved(True))
         self.hold_previous_button.released.connect(
@@ -478,10 +494,11 @@ class MainWindow(QMainWindow):
         self.show_regions_checkbox.toggled.connect(self.view_model.set_show_regions)
 
         self.adjustment_enabled_checkbox.toggled.connect(self.view_model.set_selected_adjustment_enabled)
+        self.target_selector.currentIndexChanged.connect(self._on_target_changed)
         self.black_point_slider.valueChanged.connect(
             lambda value: self.view_model.set_selected_adjustment_black_point(value / 100.0)
         )
-        self.primary_slider.valueChanged.connect(self._on_primary_value_changed)
+        self.primary_input.valueChanged.connect(self._on_primary_value_changed)
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
         self.region_scope_list.itemChanged.connect(self._on_region_scope_item_changed)
@@ -587,6 +604,8 @@ class MainWindow(QMainWindow):
         self.project_path_label.setText(str(self.view_model.project_path or ""))
         self.show_preview_button.setChecked(True)
         self.show_source_button.setChecked(False)
+        with QSignalBlocker(self.semantic_overlay_selector):
+            self.semantic_overlay_selector.setCurrentIndex(0)
 
     def _refresh_sources(self) -> None:
         self.sources_list.clear()
@@ -599,6 +618,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_preview(self) -> None:
         self.preview_widget.set_image(self.view_model.current_display_image())
+        self.preview_widget.set_semantic_overlay(self.view_model.current_semantic_overlay())
         self.preview_widget.set_regions(
             self.view_model.overlay_regions(),
             selected_region_id=self.view_model.selected_region_id,
@@ -680,6 +700,18 @@ class MainWindow(QMainWindow):
         with QSignalBlocker(self.adjustment_enabled_checkbox):
             self.adjustment_enabled_checkbox.setChecked(summary.enabled)
         self.adjustment_enabled_checkbox.setEnabled(True)
+        self.target_label.setVisible(True)
+        self.target_selector.setVisible(True)
+        with QSignalBlocker(self.target_selector):
+            self.target_selector.clear()
+            for target_id, label in [
+                ("combined", "Combined Image"),
+                ("nebula", "Nebula"),
+                ("stars", "Stars"),
+            ]:
+                self.target_selector.addItem(label, target_id)
+            current_index = self.target_selector.findData(summary.target_id)
+            self.target_selector.setCurrentIndex(max(0, current_index))
 
         has_colour_controls = summary.supports_colour_point and summary.point_label is not None
         self.colour_title_label.setVisible(has_colour_controls)
@@ -708,30 +740,39 @@ class MainWindow(QMainWindow):
             self.black_point_value_label.setText(f"{summary.black_point_value:.2f}")
 
         self.primary_label.setVisible(summary.primary_label is not None)
-        self.primary_slider.setVisible(summary.primary_value is not None)
-        self.primary_value_label.setVisible(summary.primary_value is not None)
+        self.primary_input.setVisible(summary.primary_value is not None)
         if summary.primary_label is not None and summary.primary_value is not None:
             self.primary_label.setText(summary.primary_label)
             if summary.transform_type == "colour_amount":
-                slider_value = int(round(max(1.0, min(2.0, summary.primary_value)) * 100))
-                value_label = f"+{(summary.primary_value - 1.0) * 100:.0f}%"
-                slider_range = (100, 200)
+                spin_value = max(0.0, min(100.0, (summary.primary_value - 1.0) * 100.0))
+                spin_range = (0.0, 100.0)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             elif summary.transform_type == "shift_colour_point":
-                slider_value = int(round(max(0.0, min(1.0, summary.primary_value)) * 100))
-                value_label = f"{summary.primary_value * 100:.0f}%"
-                slider_range = (0, 100)
+                spin_value = max(0.0, min(100.0, summary.primary_value * 100.0))
+                spin_range = (0.0, 100.0)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             elif summary.type_label == "Smoothing":
-                slider_value = int(round(summary.primary_value * 100))
-                value_label = f"{summary.primary_value:.2f}"
-                slider_range = (0, 100)
+                spin_value = max(0.0, min(100.0, summary.primary_value * 100.0))
+                spin_range = (0.0, 100.0)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             else:
-                slider_value = int(round(summary.primary_value * 100))
-                value_label = f"{summary.primary_value:.2f}"
-                slider_range = (0, 200)
-            with QSignalBlocker(self.primary_slider):
-                self.primary_slider.setRange(*slider_range)
-                self.primary_slider.setValue(slider_value)
-            self.primary_value_label.setText(value_label)
+                spin_value = max(-100.0, min(100.0, (summary.primary_value - 1.0) * 100.0))
+                spin_range = (-100.0, 100.0)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
+            with QSignalBlocker(self.primary_input):
+                self.primary_input.setDecimals(spin_decimals)
+                self.primary_input.setRange(*spin_range)
+                self.primary_input.setSingleStep(spin_step)
+                self.primary_input.setSuffix(spin_suffix)
+                self.primary_input.setValue(spin_value)
 
         self.secondary_label.setVisible(summary.secondary_label is not None)
         self.secondary_slider.setVisible(summary.secondary_value is not None)
@@ -804,6 +845,13 @@ class MainWindow(QMainWindow):
         self.show_source_button.setChecked(True)
         self.before_after_checkbox.setChecked(False)
         self.view_model.set_show_source(True)
+
+    def _on_semantic_overlay_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        mode = self.semantic_overlay_selector.itemData(index)
+        if isinstance(mode, str):
+            self.view_model.set_semantic_overlay_mode(cast(SemanticOverlaySelection, mode))
 
     def _toggle_pick_mode(self, enabled: bool) -> None:
         if enabled:
@@ -898,12 +946,26 @@ class MainWindow(QMainWindow):
         if isinstance(change_key, str):
             self.view_model.select_change_target(change_key)
 
-    def _on_primary_value_changed(self, value: int) -> None:
+    def _on_primary_value_changed(self, value: float) -> None:
         summary = self.view_model.selected_adjustment_summary()
         if summary is None or summary.primary_value is None:
             return
-        normalized = value / 100.0
+        if summary.transform_type == "colour_amount":
+            normalized = 1.0 + (value / 100.0)
+        elif summary.transform_type == "shift_colour_point":
+            normalized = value / 100.0
+        elif summary.type_label == "Smoothing":
+            normalized = value / 100.0
+        else:
+            normalized = 1.0 + (value / 100.0)
         self.view_model.set_selected_adjustment_primary_value(normalized)
+
+    def _on_target_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        target_id = self.target_selector.itemData(index)
+        if isinstance(target_id, str):
+            self.view_model.set_selected_adjustment_target(target_id)
 
     def _on_secondary_value_changed(self, value: int) -> None:
         self.view_model.set_selected_adjustment_secondary_value(value / 100.0)

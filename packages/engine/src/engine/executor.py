@@ -29,6 +29,7 @@ from .selection import (
     compute_luminance,
     saturation_weight,
 )
+from .semantic import semantic_target_influence
 
 
 class RuleExecutionTrace(BaseModel):
@@ -77,7 +78,7 @@ def _selection_weights(
     bundle: ProjectBundle,
     rule: DeclarativeRule,
     selection_image: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
     colour_weights = np.ones(selection_image.shape[:2], dtype=np.float32)
     if rule.match.colour_point is not None:
         colour_point = _resolve_colour_point(bundle, rule.match.colour_point)
@@ -114,11 +115,18 @@ def _selection_weights(
         selection_image.shape[1],
         selection_image.shape[0],
     )
-    combined = (colour_weights * brightness_weights * saturation_weights * region_weights).astype(
+    target_weights = semantic_target_influence(selection_image, rule.target)
+    combined = (
+        colour_weights
+        * brightness_weights
+        * saturation_weights
+        * region_weights
+        * target_weights
+    ).astype(
         np.float32,
         copy=False,
     )
-    return colour_weights, brightness_weights, region_weights, combined, region_ids
+    return colour_weights, brightness_weights, region_weights, target_weights, combined, region_ids
 
 
 def _apply_transform(
@@ -168,6 +176,7 @@ def _write_rule_debug_masks(
     colour_weights: np.ndarray,
     brightness_weights: np.ndarray,
     region_weights: np.ndarray,
+    target_weights: np.ndarray,
     combined_weights: np.ndarray,
 ) -> None:
     rule_dir = debug_root / f"{order:03d}-{_slugify(rule.name or rule.id)}"
@@ -175,6 +184,7 @@ def _write_rule_debug_masks(
     write_debug_mask(rule_dir / "colour-weight.png", colour_weights)
     write_debug_mask(rule_dir / "brightness-weight.png", brightness_weights)
     write_debug_mask(rule_dir / "region-weight.png", region_weights)
+    write_debug_mask(rule_dir / "target-weight.png", target_weights)
     write_debug_mask(rule_dir / "combined-weight.png", combined_weights)
 
 
@@ -220,6 +230,7 @@ def execute_rule_stack(
             colour_weights,
             brightness_weights,
             region_weights,
+            target_weights,
             combined_weights,
             region_ids,
         ) = _selection_weights(
@@ -238,6 +249,7 @@ def execute_rule_stack(
                 colour_weights=colour_weights,
                 brightness_weights=brightness_weights,
                 region_weights=region_weights,
+                target_weights=target_weights,
                 combined_weights=combined_weights,
             )
 

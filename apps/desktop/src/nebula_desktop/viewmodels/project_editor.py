@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import colorsys
 import json
 import re
 from dataclasses import dataclass
@@ -12,10 +13,11 @@ from engine import (
     diff_bundles,
     load_valid_project_bundle,
     render_preview_image,
+    semantic_target_influence,
     validate_project,
 )
 from image_io import CanonicalImage, load_canonical_image
-from nebula_desktop.views.image_preview import ImageSample, OverlayRegion
+from nebula_desktop.views.image_preview import ImageSample, OverlayRegion, SemanticOverlay
 from nebula_desktop.workers.preview import PreviewRenderWorker
 from project_io import read_yaml_mapping, resolve_reference_path, write_yaml_mapping
 from project_model import (
@@ -52,6 +54,7 @@ AdjustmentKind = Literal[
     "smoothness",
 ]
 SamplingPurpose = Literal["colour_point", "create_adjustment"]
+SemanticOverlaySelection = Literal["off", "stars", "nebula"]
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ class AdjustmentSummary:
     enabled: bool
     type_label: str
     transform_type: str
+    target_id: str
+    target_label: str
     point_label: str | None
     scope_label: str
     editable: bool
@@ -124,6 +129,14 @@ def _sample_luminance(rgb: tuple[float, float, float]) -> float:
     return float((0.2126 * red) + (0.7152 * green) + (0.0722 * blue))
 
 
+def _sample_saturation(rgb: tuple[float, float, float]) -> float:
+    maximum = max(rgb)
+    minimum = min(rgb)
+    if maximum <= 0.0:
+        return 0.0
+    return float((maximum - minimum) / maximum)
+
+
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "item"
@@ -181,6 +194,16 @@ def _label_from_colour_point_id(colour_point_id: str) -> str:
     return label.capitalize()
 
 
+def _colour_family_hue(family: str) -> float | None:
+    return {
+        "red": 0.0,
+        "yellow": 60.0 / 360.0,
+        "green": 120.0 / 360.0,
+        "cyan": 180.0 / 360.0,
+        "blue": 240.0 / 360.0,
+    }.get(family)
+
+
 def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
     return {
         "blue": ("nebula blue", "blue"),
@@ -199,6 +222,30 @@ def _shift_target_colour_point_id(kind: AdjustmentKind) -> str | None:
         "cyan": "nebula-cyan",
         "yellow": "nebula-yellow",
     }.get(kind)
+
+
+def _selection_family_for_rule(rule: DeclarativeRule) -> str | None:
+    transform = rule.transform
+    if isinstance(transform, ColourAmountTransform):
+        return transform.channel
+    if isinstance(transform, ShiftColourPointTransform):
+        return transform.target_colour_point.replace("_", "-").split("-")[-1]
+    return None
+
+
+def _target_options() -> tuple[tuple[str, str], ...]:
+    return (
+        ("combined", "Combined Image"),
+        ("nebula", "Nebula"),
+        ("stars", "Stars"),
+    )
+
+
+def _target_label(target_id: str) -> str:
+    for option_id, label in _target_options():
+        if option_id == target_id:
+            return label
+    return target_id.replace("_", " ").title()
 
 
 class ProjectEditorViewModel(QObject):
@@ -235,6 +282,7 @@ class ProjectEditorViewModel(QObject):
         self._is_drawing_region = False
         self._drawing_region_points: list[tuple[float, float]] = []
         self._show_regions = True
+        self._semantic_overlay_mode: SemanticOverlaySelection = "off"
         self._dirty = False
         self._active_job_id = 0
         self._thread_pool = QThreadPool(self)
@@ -276,6 +324,10 @@ class ProjectEditorViewModel(QObject):
     @property
     def show_regions(self) -> bool:
         return self._show_regions
+
+    @property
+    def semantic_overlay_mode(self) -> SemanticOverlaySelection:
+        return self._semantic_overlay_mode
 
     @property
     def is_sampling(self) -> bool:
@@ -337,6 +389,19 @@ class ProjectEditorViewModel(QObject):
             return self._current_preview.image
         return self._saved_preview.image if self._saved_preview is not None else None
 
+    def current_semantic_overlay(self) -> SemanticOverlay | None:
+        if self._semantic_overlay_mode == "off":
+            return None
+        image = self.current_display_image()
+        if image is None:
+            return None
+        mask = semantic_target_influence(image.data, self._semantic_overlay_mode)
+        label = {
+            "stars": "Star Split Overlay",
+            "nebula": "Nebula Split Overlay",
+        }[self._semantic_overlay_mode]
+        return SemanticOverlay(mode=self._semantic_overlay_mode, label=label, mask=mask)
+
     def adjustment_summaries(self) -> list[AdjustmentSummary]:
         if self._working_documents is None:
             return []
@@ -392,6 +457,8 @@ class ProjectEditorViewModel(QObject):
                     enabled=rule.enabled,
                     type_label=_type_label(rule),
                     transform_type=transform.type,
+                    target_id=rule.target,
+                    target_label=_target_label(rule.target),
                     point_label=_point_label(rule) if supports_colour_point else None,
                     scope_label=self._scope_label(rule.regions),
                     editable=editable,
@@ -528,6 +595,12 @@ class ProjectEditorViewModel(QObject):
         self.regionVisibilityChanged.emit(show_regions)
         self.previewChanged.emit()
 
+    def set_semantic_overlay_mode(self, mode: SemanticOverlaySelection) -> None:
+        if mode not in {"off", "stars", "nebula"}:
+            return
+        self._semantic_overlay_mode = mode
+        self.previewChanged.emit()
+
     def select_adjustment(self, rule_id: str) -> None:
         self._selected_adjustment_id = rule_id
         self._selection_kind = "adjustment"
@@ -628,17 +701,12 @@ class ProjectEditorViewModel(QObject):
                 f"adjustment={summary.rule_id}",
             )
             return
-        colour_point.value.channels = sample.rgb
-        if rule is not None and isinstance(
-            rule.transform,
-            (ColourAmountTransform, ShiftColourPointTransform),
-        ):
-            luminance = _sample_luminance(sample.rgb)
-            radius = 0.16
-            rule.match.brightness = RangeSelection(
-                min=max(0.0, luminance - radius),
-                max=min(1.0, luminance + radius),
-            )
+        sampled_rgb = sample.rgb
+        if rule is not None:
+            sampled_rgb = self._normalized_colour_sample(rule, sample.rgb)
+        colour_point.value.channels = sampled_rgb
+        if rule is not None:
+            self._configure_colour_selection_from_sample(rule, sampled_rgb)
         self.finish_sampling()
         self._after_metadata_change(render=True)
         point_label = summary.point_label or "Colour Point"
@@ -683,6 +751,12 @@ class ProjectEditorViewModel(QObject):
             rule_name=rule_name,
             colour_point_id=colour_point_id,
         )
+        if colour_point_id is not None:
+            colour_point = self._find_colour_point(self._working_documents.bundle, colour_point_id)
+            if colour_point is not None:
+                normalized_rgb = self._normalized_colour_sample(rule, sample.rgb)
+                colour_point.value.channels = normalized_rgb
+                self._configure_colour_selection_from_sample(rule, normalized_rgb)
         self._working_documents.bundle.project.rules.append(rule)
         self._selected_adjustment_id = rule.id
         self._selection_kind = "adjustment"
@@ -805,6 +879,15 @@ class ProjectEditorViewModel(QObject):
                 return
             rule.regions = [default_region_id]
             self._after_metadata_change(render=True)
+
+    def set_selected_adjustment_target(self, target_id: str) -> None:
+        rule = self._selected_rule_model()
+        if rule is None:
+            return
+        if target_id not in {option_id for option_id, _label in _target_options()}:
+            return
+        rule.target = target_id
+        self._after_metadata_change(render=True)
 
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:
         rule = self._selected_rule_model()
@@ -1172,9 +1255,41 @@ class ProjectEditorViewModel(QObject):
         return "Multiple regions"
 
     def _default_target(self) -> str:
-        if self._working_documents is None:
-            return "nebula"
-        return self._working_documents.bundle.project.semantic_channels[0].id
+        return "combined"
+
+    def _normalized_colour_sample(
+        self,
+        rule: DeclarativeRule,
+        rgb: tuple[float, float, float],
+    ) -> tuple[float, float, float]:
+        family = _selection_family_for_rule(rule)
+        hue = _colour_family_hue(family or "")
+        if hue is None:
+            return rgb
+        _sample_hue, saturation, value = colorsys.rgb_to_hsv(*rgb)
+        adjusted_saturation = max(0.35, saturation)
+        red, green, blue = colorsys.hsv_to_rgb(hue, adjusted_saturation, value)
+        return float(red), float(green), float(blue)
+
+    def _configure_colour_selection_from_sample(
+        self,
+        rule: DeclarativeRule,
+        rgb: tuple[float, float, float],
+    ) -> None:
+        if not isinstance(rule.transform, (ColourAmountTransform, ShiftColourPointTransform)):
+            return
+        luminance = _sample_luminance(rgb)
+        saturation = _sample_saturation(rgb)
+        rule.match.colour_range = 0.08
+        rule.match.softness = 0.30
+        rule.match.brightness = RangeSelection(
+            min=max(0.0, luminance - 0.12),
+            max=min(1.0, luminance + 0.12),
+        )
+        rule.match.saturation = RangeSelection(
+            min=max(0.18, saturation - 0.18),
+            max=min(1.0, max(0.45, saturation + 0.18)),
+        )
 
     def _default_colour_point_id(self, kind: AdjustmentKind) -> str | None:
         if self._working_documents is None:

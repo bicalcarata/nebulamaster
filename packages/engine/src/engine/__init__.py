@@ -13,6 +13,7 @@ from .render import (
     render_output,
 )
 from .selection import apply_weighted_channel_transform, brightness_weight, colour_weight
+from .semantic import semantic_target_influence, star_influence
 from .sources import (
     PreparedSourcesResult,
     SourceAlignmentReport,
@@ -74,6 +75,8 @@ __all__ = [
     "render_preview",
     "render_preview_image",
     "resolve_region_influence",
+    "semantic_target_influence",
+    "star_influence",
     "validate_project",
     "write_aligned_bundle",
 ]

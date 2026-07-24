@@ -29,6 +29,8 @@ from project_model import (
 )
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+BUILTIN_SEMANTIC_TARGET_IDS = {"combined", "nebula", "stars"}
+
 EXIT_VALIDATION_SUCCESS = 0
 EXIT_VALIDATION_ERROR = 1
 EXIT_RUNTIME_ERROR = 2
@@ -162,7 +164,10 @@ def _validate_project_cross_references(bundle: ProjectBundle) -> list[Validation
     }
 
     for rule in bundle.project.rules:
-        if rule.target not in semantic_channel_ids:
+        if (
+            rule.target not in semantic_channel_ids
+            and rule.target not in BUILTIN_SEMANTIC_TARGET_IDS
+        ):
             issues.append(
                 _issue(
                     "unknown-semantic-channel",

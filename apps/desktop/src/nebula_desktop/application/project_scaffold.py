@@ -104,14 +104,19 @@ def scaffold_project_from_image(
             ],
             semantic_channels=[
                 SemanticChannel(
+                    id="combined",
+                    name="Combined Image",
+                    description="Full image before semantic targeting",
+                ),
+                SemanticChannel(
                     id="nebula",
                     name="Nebula",
                     description="Main nebula emission",
                 ),
                 SemanticChannel(
-                    id="background",
-                    name="Background",
-                    description="Background sky",
+                    id="stars",
+                    name="Stars",
+                    description="Compact stellar sources",
                 ),
             ],
             palettes=[FileReference(id="default-nebula", path=palette_relative_path)],

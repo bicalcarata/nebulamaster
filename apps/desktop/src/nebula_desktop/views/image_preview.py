@@ -20,6 +20,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 InteractionMode = Literal["navigate", "sampling", "draw_region", "edit_region"]
+SemanticOverlayMode = Literal["stars", "nebula"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,13 @@ class SampleMarker:
     x: int
     y: int
     rgb: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class SemanticOverlay:
+    mode: SemanticOverlayMode
+    label: str
+    mask: np.ndarray
 
 
 def canonical_image_to_qimage(image: CanonicalImage) -> QImage:
@@ -92,6 +100,8 @@ class ImagePreviewWidget(QWidget):
         self._active_region_move_id: str | None = None
         self._last_region_position: tuple[float, float] | None = None
         self._sample_marker: SampleMarker | None = None
+        self._semantic_overlay: SemanticOverlay | None = None
+        self._semantic_overlay_pixmap: QPixmap | None = None
 
     def set_image(self, image: CanonicalImage | None) -> None:
         self._image = image
@@ -100,7 +110,16 @@ class ImagePreviewWidget(QWidget):
             if image is not None
             else None
         )
+        self._refresh_semantic_overlay_pixmap()
         self.update()
+
+    def set_semantic_overlay(self, overlay: SemanticOverlay | None) -> None:
+        self._semantic_overlay = overlay
+        self._refresh_semantic_overlay_pixmap()
+        self.update()
+
+    def semantic_overlay(self) -> SemanticOverlay | None:
+        return self._semantic_overlay
 
     def set_interaction_mode(self, mode: InteractionMode) -> None:
         self._mode = mode
@@ -222,6 +241,34 @@ class ImagePreviewWidget(QWidget):
         )
         return rect, scale
 
+    def _refresh_semantic_overlay_pixmap(self) -> None:
+        if self._semantic_overlay is None or self._image is None:
+            self._semantic_overlay_pixmap = None
+            return
+
+        mask = np.clip(self._semantic_overlay.mask, 0.0, 1.0).astype(np.float32, copy=False)
+        if self._semantic_overlay.mode == "stars":
+            display_mask = np.power(np.clip(mask, 0.0, 1.0), 0.55).astype(np.float32, copy=False)
+        else:
+            display_mask = np.clip(mask, 0.0, 1.0).astype(np.float32, copy=False)
+
+        diagnostic = np.clip(
+            self._image.data * display_mask[..., None],
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+        clipped = np.clip(diagnostic * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+        contiguous = np.ascontiguousarray(clipped)
+        height, width, _channels = contiguous.shape
+        qimage = QImage(
+            contiguous.data,
+            width,
+            height,
+            width * 3,
+            QImage.Format.Format_RGB888,
+        )
+        self._semantic_overlay_pixmap = QPixmap.fromImage(qimage.copy())
+
     def _region_vertices(self, region: OverlayRegion) -> list[QPointF]:
         vertices: list[QPointF] = []
         for point in region.polygon:
@@ -307,6 +354,18 @@ class ImagePreviewWidget(QWidget):
         if rect is None:
             return
         painter.drawPixmap(rect, self._pixmap, self._pixmap.rect())
+        if self._semantic_overlay_pixmap is not None and self._semantic_overlay is not None:
+            painter.drawPixmap(
+                rect,
+                self._semantic_overlay_pixmap,
+                self._semantic_overlay_pixmap.rect(),
+            )
+            painter.setPen(QColor("#d9e2ec"))
+            painter.drawText(
+                QRectF(rect.left() + 12.0, rect.top() + 12.0, 220.0, 24.0),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._semantic_overlay.label,
+            )
         if self._show_regions:
             self._paint_regions(painter)
         if self._mode == "draw_region" and self._drawing_points:
