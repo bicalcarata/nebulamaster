@@ -330,6 +330,7 @@ On Windows:
 
 - `dist/Nebula Master/`
 - `dist/NebulaMaster-windows.zip`
+- `dist/NebulaMaster-Setup.exe` when Inno Setup is available
 
 The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/nebulamaster/scripts/package_desktop.py), which:
 
@@ -337,6 +338,7 @@ The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/neb
 - generates the bundled Nebula Master application icon from [scripts/build_app_icon.py](/Users/damon/gitlab/nebulamaster/scripts/build_app_icon.py)
 - emits `.icns` for macOS and `.ico` for Windows
 - packages native desktop artifacts for the current platform
+- emits a portable Windows `.zip` plus an installer `.exe` when Inno Setup is installed
 
 ## CI And Releases
 
@@ -349,6 +351,6 @@ Release flow:
 
 1. Push a version tag such as `v0.1.0`.
 2. GitHub Actions builds the macOS and Windows desktop artifacts.
-3. The workflow uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` file to the matching GitHub Release.
+3. The workflow uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
 
 For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.

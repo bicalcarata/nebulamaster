@@ -5,6 +5,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -14,10 +15,13 @@ PYINSTALLER_CONFIG_DIR = ROOT_DIR / "build" / "pyinstaller-config"
 DMG_STAGE_DIR = ROOT_DIR / "build" / "dmg-stage"
 ICONSET_DIR = ROOT_DIR / "build" / "nebula-master.iconset"
 SPEC_PATH = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula_master.spec"
+WINDOWS_INSTALLER_SCRIPT = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula_master.iss"
 ASSETS_DIR = ROOT_DIR / "apps" / "desktop" / "assets"
 ICON_PNG = ASSETS_DIR / "nebula-master-icon.png"
 ICON_ICNS = ASSETS_DIR / "nebula-master.icns"
 APP_NAME = "Nebula Master"
+WINDOWS_ZIP_NAME = "NebulaMaster-windows.zip"
+WINDOWS_INSTALLER_NAME = "NebulaMaster-Setup.exe"
 
 
 class PackagingError(RuntimeError):
@@ -43,6 +47,15 @@ def _clean_path(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     elif path.exists():
         path.unlink()
+
+
+def _app_version() -> str:
+    with (ROOT_DIR / "pyproject.toml").open("rb") as handle:
+        data = tomllib.load(handle)
+    version = data.get("project", {}).get("version")
+    if not isinstance(version, str) or not version:
+        raise PackagingError("Could not determine application version from pyproject.toml.")
+    return version
 
 
 def _build_icons() -> None:
@@ -100,6 +113,40 @@ def _run_pyinstaller() -> None:
     )
 
 
+def _find_windows_iscc() -> str | None:
+    candidates = [
+        shutil.which("ISCC.exe"),
+        shutil.which("iscc"),
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _build_windows_installer(app_dir: Path) -> Path | None:
+    iscc = _find_windows_iscc()
+    if iscc is None:
+        print("Warning: Inno Setup was not found; skipping Windows installer build.")
+        return None
+
+    installer_path = DIST_DIR / WINDOWS_INSTALLER_NAME
+    _clean_path(installer_path)
+    _run(
+        iscc,
+        f"/DAppName={APP_NAME}",
+        f"/DAppVersion={_app_version()}",
+        f"/DSourceDir={app_dir}",
+        f"/DOutputDir={DIST_DIR}",
+        f"/DOutputBaseFilename={installer_path.stem}",
+        f"/DIconFile={ASSETS_DIR / 'nebula-master.ico'}",
+        str(WINDOWS_INSTALLER_SCRIPT),
+    )
+    return installer_path if installer_path.is_file() else None
+
+
 def _package_macos() -> list[Path]:
     app_bundle_path = DIST_DIR / f"{APP_NAME}.app"
     zip_path = DIST_DIR / "NebulaMaster.app.zip"
@@ -151,9 +198,10 @@ def _package_macos() -> list[Path]:
 def _package_windows() -> list[Path]:
     app_dir = DIST_DIR / APP_NAME
     zip_base = DIST_DIR / "NebulaMaster-windows"
-    zip_path = DIST_DIR / "NebulaMaster-windows.zip"
+    zip_path = DIST_DIR / WINDOWS_ZIP_NAME
     _clean_path(app_dir)
     _clean_path(zip_path)
+    _clean_path(DIST_DIR / WINDOWS_INSTALLER_NAME)
     _clean_path(BUILD_DIR)
     _build_icons()
     _run_pyinstaller()
@@ -161,7 +209,11 @@ def _package_windows() -> list[Path]:
     if Path(archive) != zip_path:
         _clean_path(zip_path)
         Path(archive).rename(zip_path)
-    return [app_dir, zip_path]
+    artifacts: list[Path] = [app_dir, zip_path]
+    installer_path = _build_windows_installer(app_dir)
+    if installer_path is not None:
+        artifacts.append(installer_path)
+    return artifacts
 
 
 def main() -> int:
