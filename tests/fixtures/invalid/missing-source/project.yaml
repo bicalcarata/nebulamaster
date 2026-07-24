@@ -1,0 +1,30 @@
+schema_version: 1
+project:
+  id: broken-source
+  name: Broken Source
+sources:
+  - id: source-01
+    path: sources/missing.tif
+semantic_channels:
+  - id: nebula
+    name: Nebula
+palettes:
+  - id: default-nebula
+    path: palettes/default-nebula.yaml
+regions:
+  - id: region-a
+    path: regions/region-a.yaml
+render_profiles:
+  - id: screen
+    path: render_profiles/screen.yaml
+plugins:
+  path: plugins/lock.yaml
+rules:
+  - id: test-rule
+    target: nebula
+    match:
+      colour_point: nebula-blue
+      regions: [region-a]
+    transform:
+      blue: 0.2
+

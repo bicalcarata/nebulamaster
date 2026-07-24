@@ -1,0 +1,10 @@
+id: archive
+name: Archive Master
+profile:
+  type: archive
+  format: tiff
+  color_space: srgb
+  bit_depth: 16
+  interpolation: lanczos
+preview:
+  cacheable: true

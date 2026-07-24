@@ -1,0 +1,45 @@
+schema_version: 1
+project:
+  id: lion-nebula
+  name: Lion Print
+  created_at: 2026-07-20T00:00:00Z
+sources:
+  - id: source-01
+    path: sources/source-02.tif
+    enabled: true
+    checksum: sha256:lion-print
+semantic_channels:
+  - id: nebula
+    name: Nebula
+  - id: background
+    name: Background
+palettes:
+  - id: default-nebula
+    path: palettes/default-nebula.yaml
+regions:
+  - id: lower-right
+    path: regions/lower-right.yaml
+render_profiles:
+  - id: screen
+    path: render_profiles/screen.yaml
+plugins:
+  path: plugins/lock.yaml
+rules:
+  - id: reveal-faint-blue
+    name: Reveal faint blue
+    enabled: true
+    selection_source: current
+    target: nebula
+    regions: [lower-right]
+    match:
+      colour_point: blue-point
+      colour_range: 0.12
+      brightness:
+        min: 0.08
+        max: 0.50
+      softness: 0.75
+    transform:
+      type: colour_amount
+      channel: blue
+      amount: 1.35
+      preserve_luminance: true

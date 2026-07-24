@@ -1,0 +1,4 @@
+plugins:
+  - id: core.semantic-masks
+    version: 1.2.0
+

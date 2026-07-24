@@ -1,0 +1,15 @@
+id: print-42x29.7cm
+name: Print 42 x 29.7 cm
+profile:
+  type: print
+  format: tiff
+  color_space: srgb
+  bit_depth: 16
+  width: 42.0
+  height: 29.7
+  units: cm
+  ppi: 300
+  crop_mode: fit
+  interpolation: lanczos
+preview:
+  cacheable: true

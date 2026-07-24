@@ -1,0 +1,953 @@
+from __future__ import annotations
+
+import hashlib
+import shutil
+from pathlib import Path
+from typing import Any, cast
+
+import numpy as np
+import yaml
+from image_io import inspect_image
+from nebula_desktop.application.project_scaffold import scaffold_project_from_image
+from nebula_desktop.application.window import MainWindow
+from nebula_desktop.viewmodels.project_editor import AdjustmentKind, ProjectEditorViewModel
+from nebula_desktop.views.image_preview import ImagePreviewWidget, ImageSample
+from PIL import Image
+from project_io import read_yaml_mapping
+from project_model import ColourAmountTransform, SaturationTransform, ShiftColourPointTransform
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
+
+
+def _copy_example_project(tmp_path: Path) -> Path:
+    source = Path("examples/valid/minimal-project")
+    destination = tmp_path / "project"
+    shutil.copytree(source, destination)
+    return destination
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _append_rule(project_dir: Path, rule: dict[str, Any]) -> None:
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    payload["rules"].append(rule)
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _create_source_image(path: Path) -> None:
+    image = Image.new("RGB", (16, 12), color=(32, 64, 128))
+    image.save(path)
+
+
+def _preview_sample(view_model: ProjectEditorViewModel) -> ImageSample:
+    preview = view_model._current_preview
+    assert preview is not None
+    rgb = cast(
+        tuple[float, float, float],
+        tuple(float(channel) for channel in preview.image.data[0, 0]),
+    )
+    return ImageSample(x=0, y=0, rgb=rgb)
+
+
+def test_desktop_opens_valid_project_headless(qtbot: Any, tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.project_name_label.text() == "Horsehead Demo"
+    assert window.view_model.current_display_image() is not None
+
+
+def test_open_project_dialog_accepts_project_yaml(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_file = project_dir / "project.yaml"
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(project_file), "Nebula Project (project.yaml)"),
+    )
+
+    window._open_project_dialog()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.project_name_label.text() == "Horsehead Demo"
+
+
+def test_scaffold_project_from_tiff_creates_valid_project(tmp_path: Path) -> None:
+    source_path = tmp_path / "horsehead-source.tiff"
+    _create_source_image(source_path)
+    parent_dir = tmp_path / "projects"
+    parent_dir.mkdir()
+
+    project_file = scaffold_project_from_image(
+        source_path=source_path,
+        destination_parent=parent_dir,
+        project_name="Horsehead First Pass",
+    )
+
+    project_dir = project_file.parent
+    copied_source = project_dir / "sources/source-01.tiff"
+    assert project_file == project_dir / "project.yaml"
+    assert copied_source.is_file()
+    assert copied_source.read_bytes() == source_path.read_bytes()
+    assert inspect_image(copied_source).format == "TIFF"
+
+    payload = read_yaml_mapping(project_file)
+    assert payload["project"]["name"] == "Horsehead First Pass"
+    assert payload["sources"][0]["path"] == "sources/source-01.tiff"
+    assert payload["rules"] == []
+    assert (project_dir / "palettes/default-nebula.yaml").is_file()
+    assert (project_dir / "render_profiles/screen-preview.yaml").is_file()
+    assert (project_dir / "plugins/lock.yaml").is_file()
+    palette_payload = read_yaml_mapping(project_dir / "palettes/default-nebula.yaml")
+    colour_point_ids = [point["id"] for point in palette_payload["colour_points"]]
+    assert colour_point_ids == [
+        "nebula-blue",
+        "star-blue",
+        "nebula-red",
+        "nebula-cyan",
+        "nebula-green",
+        "nebula-yellow",
+    ]
+
+
+def test_new_project_dialog_scaffolds_and_opens_project(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.tiff"
+    _create_source_image(source_path)
+    parent_dir = tmp_path / "library"
+    parent_dir.mkdir()
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(source_path), "Images (*.tif *.tiff *.png *.jpg *.jpeg)"),
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(parent_dir),
+    )
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("Lion Blue Pass", True),
+    )
+
+    window._new_project_from_image_dialog()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    created_project = parent_dir / "Lion Blue Pass"
+    assert (created_project / "project.yaml").is_file()
+    assert window.project_name_label.text() == "Lion Blue Pass"
+
+
+def test_invalid_project_raises_readable_error(qtbot: Any, tmp_path: Path) -> None:
+    _ = qtbot
+    _ = tmp_path
+    invalid_project = Path("tests/fixtures/invalid/missing-source")
+    messages: list[tuple[str, str]] = []
+    view_model = ProjectEditorViewModel()
+    view_model.errorRaised.connect(lambda summary, details: messages.append((summary, details)))
+
+    assert view_model.open_project(invalid_project) is False
+    assert messages
+    assert messages[0][0].startswith("This project could not be opened because")
+
+
+def test_working_state_is_separate_from_saved_state(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    selected = view_model.selected_rule()
+    assert selected is not None
+
+    original_amount = selected.amount
+    view_model.set_rule_amount(original_amount + 0.2)
+
+    assert view_model.dirty is True
+    updated_selected = view_model.selected_rule()
+    assert updated_selected is not None
+    assert updated_selected.amount == original_amount + 0.2
+    saved_documents = view_model._saved_documents
+    assert saved_documents is not None
+    saved_rule = view_model._find_rule(saved_documents.bundle, selected.rule_id)
+    assert saved_rule is not None
+    assert isinstance(saved_rule.transform, ColourAmountTransform)
+    assert saved_rule.transform.amount == original_amount
+
+
+def test_open_project_renders_preview_once_on_load(monkeypatch: Any, tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    from engine.preview import render_preview_image as original_render
+
+    calls = 0
+
+    def tracking_render(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "nebula_desktop.viewmodels.project_editor.render_preview_image",
+        tracking_render,
+    )
+
+    assert view_model.open_project(project_dir) is True
+    assert calls == 1
+
+
+def test_adjustment_summary_exposes_rule_specific_point_label_and_black_point(
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.select_adjustment("red")
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.point_label == "Red Point"
+    assert summary.black_point_value == 0.0
+
+    view_model.set_selected_adjustment_black_point(0.27)
+    updated = view_model.selected_adjustment_summary()
+    assert updated is not None
+    assert updated.black_point_value == 0.27
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    red_rule = view_model._find_rule(working_documents.bundle, "red")
+    assert red_rule is not None
+    assert red_rule.match.brightness is not None
+    assert red_rule.match.brightness.min == 0.27
+    assert red_rule.match.brightness.max == 1.0
+
+
+def test_non_colour_adjustments_hide_point_and_black_point_controls(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.select_adjustment("brightness")
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.point_label is None
+    assert summary.supports_colour_point is False
+    assert summary.colour_point_id is None
+    assert summary.black_point_value is None
+
+
+def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.select_adjustment("red")
+    qtbot.waitUntil(lambda: window.pick_button.text() == "Pick Red Point", timeout=5000)
+
+    assert window.colour_title_label.text() == "Red Point"
+    assert window.pick_button.text() == "Pick Red Point"
+
+
+def test_adjustment_editor_hides_colour_controls_for_non_colour_adjustments(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.select_adjustment("brightness")
+    qtbot.waitUntil(lambda: not window.colour_title_label.isVisible(), timeout=5000)
+
+    assert window.colour_title_label.isHidden()
+    assert window.colour_point_label.isHidden()
+    assert window.colour_swatch.isHidden()
+    assert window.pick_button.isEnabled() is False
+    assert window.black_point_label.isHidden()
+    assert window.black_point_slider.isHidden()
+
+
+def test_disabled_rule_remains_declared_and_revert_restores_saved_state(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    selected = view_model.selected_rule()
+    assert selected is not None
+
+    view_model.set_rule_enabled(False)
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    disabled_rule = view_model._find_rule(working_documents.bundle, selected.rule_id)
+    assert disabled_rule is not None
+    assert disabled_rule.enabled is False
+
+    view_model.revert_unsaved_changes()
+    reverted_documents = view_model._working_documents
+    assert reverted_documents is not None
+    reverted_rule = view_model._find_rule(reverted_documents.bundle, selected.rule_id)
+    assert reverted_rule is not None
+    assert reverted_rule.enabled is True
+
+
+def test_sampling_maps_widget_coordinates_to_underlying_image() -> None:
+    app = QApplication.instance() or QApplication([])
+    _ = app
+    widget = ImagePreviewWidget()
+    widget.resize(400, 300)
+    project_dir = Path("examples/valid/minimal-project")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    image = view_model._source_image
+    assert image is not None
+    widget.set_image(image)
+    coordinates = widget.map_widget_to_image(QPointF(widget.width() / 2.0, widget.height() / 2.0))
+    assert coordinates is not None
+    x, y = coordinates
+    assert 0 <= x < image.width
+    assert 0 <= y < image.height
+
+
+def test_sampling_ignores_clicks_outside_letterboxed_image() -> None:
+    app = QApplication.instance() or QApplication([])
+    _ = app
+    widget = ImagePreviewWidget()
+    widget.resize(500, 300)
+    project_dir = Path("examples/valid/minimal-project")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    image = view_model._source_image
+    assert image is not None
+    widget.set_image(image)
+    assert widget.sample_at_widget_position(QPointF(10.0, 10.0)) is None
+
+
+def test_sampling_maps_correctly_when_zoomed_and_panned() -> None:
+    app = QApplication.instance() or QApplication([])
+    _ = app
+    widget = ImagePreviewWidget()
+    widget.resize(400, 300)
+    project_dir = Path("examples/valid/minimal-project")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    image = view_model._source_image
+    assert image is not None
+    widget.set_image(image)
+    widget.actual_size()
+    widget.zoom_in()
+    widget.zoom_in()
+    widget._pan = QPointF(30.0, -20.0)
+    point = widget.map_normalized_to_widget((0.5, 0.5))
+    assert point is not None
+    sample = widget.sample_at_widget_position(point)
+    assert sample is not None
+    assert abs(sample.x - image.width // 2) <= 1
+    assert abs(sample.y - image.height // 2) <= 1
+
+
+def test_sampling_uses_fractional_widget_positions() -> None:
+    app = QApplication.instance() or QApplication([])
+    _ = app
+    widget = ImagePreviewWidget()
+    widget.resize(401, 301)
+    project_dir = Path("examples/valid/minimal-project")
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    image = view_model._source_image
+    assert image is not None
+    widget.set_image(image)
+    sample = widget.sample_at_widget_position(QPointF(200.5, 150.5))
+    assert sample is not None
+    assert 0 <= sample.x < image.width
+    assert 0 <= sample.y < image.height
+
+
+def test_stale_preview_results_do_not_overwrite_newer_results(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    first = view_model._saved_preview
+    assert first is not None
+    second = view_model._current_preview
+    assert second is not None
+
+    view_model._active_job_id = 4
+    assert view_model.apply_preview_result(3, first) is False
+    assert view_model.apply_preview_result(4, second) is True
+
+
+def test_create_adjustment_selection_mode_can_be_cancelled(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.create_from_selection_button.click()
+    assert window.view_model.sampling_purpose == "create_adjustment"
+    assert window.cancel_selection_button.isVisible() is True
+
+    event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    window.preview_widget.keyPressEvent(event)
+
+    assert window.view_model.is_sampling is False
+    assert window.view_model.dirty is False
+
+
+def test_create_adjustment_from_selection_uses_preview_and_source_display_state(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    center = QPointF(window.preview_widget.width() / 2.0, window.preview_widget.height() / 2.0)
+    window._show_preview()
+    preview_sample = window.preview_widget.sample_at_widget_position(center)
+    assert preview_sample is not None
+    window._show_source()
+    source_sample = window.preview_widget.sample_at_widget_position(center)
+    assert source_sample is not None
+    assert preview_sample.rgb != source_sample.rgb
+
+    monkeypatch.setattr(window, "_choose_adjustment_kind_from_sample", lambda sample: "blue")
+    window.create_from_selection_button.click()
+    window._apply_sample(preview_sample)
+
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.name == "Selected Blue"
+    assert summary.rule_id == window.view_model.selected_adjustment_id
+
+
+def test_create_adjustment_from_selection_can_create_each_supported_type(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    sample = _preview_sample(view_model)
+
+    kinds: tuple[AdjustmentKind, ...] = (
+        "blue",
+        "red",
+        "green",
+        "cyan",
+        "yellow",
+        "brightness",
+        "saturation",
+        "smoothness",
+    )
+    created_ids = [
+        view_model.create_adjustment_from_selection(kind, sample)
+        for kind in kinds
+    ]
+    assert all(rule_id is not None for rule_id in created_ids)
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    rules = working_documents.bundle.project.rules
+    assert [rule.id for rule in rules][-8:] == [
+        rule_id for rule_id in created_ids if rule_id is not None
+    ]
+    cyan_rule = view_model._find_rule(working_documents.bundle, created_ids[3] or "")
+    assert cyan_rule is not None
+    assert isinstance(cyan_rule.transform, ShiftColourPointTransform)
+    saturation_rule = view_model._find_rule(working_documents.bundle, created_ids[6] or "")
+    assert saturation_rule is not None
+    assert isinstance(saturation_rule.transform, SaturationTransform)
+
+
+def test_selected_colour_adjustments_copy_sampled_colour_into_new_point(
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    sample = ImageSample(x=0, y=0, rgb=(0.12, 0.23, 0.34))
+
+    for kind in cast(tuple[AdjustmentKind, ...], ("blue", "red", "green", "cyan", "yellow")):
+        rule_id = view_model.create_adjustment_from_selection(kind, sample)
+        assert rule_id is not None
+        working_documents = view_model._working_documents
+        assert working_documents is not None
+        rule = view_model._find_rule(working_documents.bundle, rule_id)
+        assert rule is not None
+        assert rule.match.colour_point is not None
+        colour_point = view_model._find_colour_point(
+            working_documents.bundle,
+            rule.match.colour_point,
+        )
+        assert colour_point is not None
+        assert colour_point.value.channels == sample.rgb
+        if kind in {"cyan", "yellow"}:
+            assert isinstance(rule.transform, ShiftColourPointTransform)
+            assert rule.transform.target_colour_point == {
+                "cyan": "nebula-cyan",
+                "yellow": "nebula-yellow",
+            }[kind]
+
+
+def test_selected_adjustment_names_are_unique_and_appended_at_end(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    sample = _preview_sample(view_model)
+
+    first = view_model.create_adjustment_from_selection("blue", sample)
+    second = view_model.create_adjustment_from_selection("blue", sample)
+    assert first is not None and second is not None
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    assert working_documents.bundle.project.rules[-2].name == "Selected Blue"
+    assert working_documents.bundle.project.rules[-1].name == "Selected Blue 2"
+
+
+def test_created_adjustment_appears_in_semantic_changes_and_can_be_reverted(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    sample = _preview_sample(view_model)
+
+    created_id = view_model.create_adjustment_from_selection("red", sample)
+    assert created_id is not None
+    changes = view_model.unsaved_changes()
+    assert any("Selected Red" in change.summary for change in changes)
+    rule_change = next(
+        change
+        for change in changes
+        if change.entity_type == "rule" and change.entity_id == created_id
+    )
+
+    view_model.revert_change(rule_change.key)
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    assert view_model._find_rule(working_documents.bundle, created_id) is None
+    assert view_model.unsaved_changes() == []
+
+
+def test_marker_is_cleared_after_creation_or_cancellation(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+    sample = ImageSample(x=1, y=1, rgb=(0.1, 0.2, 0.3))
+
+    monkeypatch.setattr(window, "_choose_adjustment_kind_from_sample", lambda sample: None)
+    window.create_from_selection_button.click()
+    window._apply_sample(sample)
+    assert window.preview_widget.sample_marker() is None
+
+    monkeypatch.setattr(window, "_choose_adjustment_kind_from_sample", lambda sample: "blue")
+    window.create_from_selection_button.click()
+    window._apply_sample(sample)
+    assert window.preview_widget.sample_marker() is None
+
+
+def test_existing_pick_point_behaviour_still_updates_selected_colour_point(
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    view_model.select_adjustment("red")
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.colour_point_id is not None
+
+    view_model.begin_sampling()
+    view_model.apply_image_sample(ImageSample(x=0, y=0, rgb=(0.2, 0.3, 0.4)))
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    colour_point = view_model._find_colour_point(working_documents.bundle, summary.colour_point_id)
+    assert colour_point is not None
+    assert colour_point.value.channels == (0.2, 0.3, 0.4)
+
+
+def test_colour_point_sampling_retargets_brightness_window(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    view_model.select_adjustment("red")
+
+    view_model.begin_sampling()
+    view_model.apply_image_sample(ImageSample(x=0, y=0, rgb=(0.7, 0.1, 0.1)))
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    red_rule = view_model._find_rule(working_documents.bundle, "red")
+    assert red_rule is not None
+    assert red_rule.match.brightness is not None
+    assert 0.0 <= red_rule.match.brightness.min < red_rule.match.brightness.max <= 1.0
+    assert red_rule.match.brightness.max - red_rule.match.brightness.min <= 0.32 + 1e-6
+
+
+def test_colour_adjustment_amount_does_not_cross_below_neutral(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    view_model.select_adjustment("red")
+
+    view_model.set_selected_adjustment_primary_value(0.4)
+
+    working_documents = view_model._working_documents
+    assert working_documents is not None
+    red_rule = view_model._find_rule(working_documents.bundle, "red")
+    assert red_rule is not None
+    assert isinstance(red_rule.transform, ColourAmountTransform)
+    assert red_rule.transform.amount == 1.0
+
+
+def test_unsupported_rules_survive_save_and_source_bytes_remain_unchanged(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    rules = payload["rules"]
+    rules.append(
+        {
+            "id": "soften-blue-colour",
+            "name": "Smooth blue glow",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+                "match": {"colour_point": "nebula-blue", "colour_range": 0.15, "softness": 0.5},
+            "transform": {"type": "colour_smoothing", "radius": 0.006, "strength": 0.2},
+        }
+    )
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    source_hash_before = _sha256(project_dir / "sources/source-01.tif")
+
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    selected = view_model.selected_rule()
+    assert selected is not None
+    view_model.set_rule_amount(selected.amount + 0.1)
+    assert view_model.save_changes() is True
+
+    refreshed = read_yaml_mapping(project_path)
+    refreshed_rules = refreshed["rules"]
+    assert any(rule["id"] == "soften-blue-colour" for rule in refreshed_rules)
+    assert _sha256(project_dir / "sources/source-01.tif") == source_hash_before
+
+
+def test_save_persists_metadata_and_no_generated_state_is_written(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    selected = view_model.selected_rule()
+    assert selected is not None
+    view_model.set_rule_amount(1.42)
+    view_model.set_rule_enabled(False)
+    assert view_model.snapshot_contains_generated_state() is False
+    assert view_model.save_changes() is True
+
+    project_payload = read_yaml_mapping(project_dir / "project.yaml")
+    saved_rule = next(rule for rule in project_payload["rules"] if rule["id"] == selected.rule_id)
+    assert saved_rule["enabled"] is False
+    assert abs(float(saved_rule["transform"]["amount"]) - 1.42) < 1e-6
+
+    palette_path = project_dir / "palettes/default-nebula.yaml"
+    palette_payload = read_yaml_mapping(palette_path)
+    assert "generated" not in str(project_payload)
+    assert "previews" not in str(palette_payload)
+
+
+def test_adjustments_follow_declaration_order_and_reorder_persists(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    _append_rule(
+        project_dir,
+        {
+            "id": "lift-brightness",
+            "name": "Lift brightness",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"colour_point": "nebula-blue", "colour_range": 0.2, "softness": 0.5},
+            "transform": {"type": "brightness", "amount": 1.1},
+        },
+    )
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    initial_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    assert initial_ids[-1] == "lift-brightness"
+    assert "reveal-faint-blue" in initial_ids
+
+    view_model.select_adjustment("lift-brightness")
+    for _ in range(len(initial_ids) - 1):
+        view_model.move_selected_adjustment("earlier")
+
+    reordered_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    assert reordered_ids[0] == "lift-brightness"
+    assert any("now runs before" in change.summary for change in view_model.unsaved_changes())
+
+    assert view_model.save_changes() is True
+    saved_ids = [rule["id"] for rule in read_yaml_mapping(project_dir / "project.yaml")["rules"]]
+    assert saved_ids[0] == "lift-brightness"
+
+
+def test_add_remove_and_duplicate_adjustments_leave_others_active(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    original_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    view_model.create_adjustment("brightness")
+    added_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    assert len(added_ids) == len(original_ids) + 1
+    new_rule_id = next(rule_id for rule_id in added_ids if rule_id not in original_ids)
+
+    view_model.duplicate_selected_adjustment()
+    duplicated_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    assert len(duplicated_ids) == len(original_ids) + 2
+
+    view_model.select_adjustment("soften-blue-glow")
+    view_model.remove_selected_adjustment()
+    remaining_ids = [summary.rule_id for summary in view_model.adjustment_summaries()]
+    assert "soften-blue-glow" not in remaining_ids
+    assert "reveal-faint-blue" in remaining_ids
+    assert any(rule_id.startswith(new_rule_id) for rule_id in remaining_ids)
+
+
+def test_new_blue_and_red_adjustments_use_matching_default_colour_points(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("blue")
+    blue_rule = view_model._selected_rule_model()
+    assert blue_rule is not None
+    assert blue_rule.match.colour_point == "nebula-blue"
+
+    view_model.create_adjustment("red")
+    red_rule = view_model._selected_rule_model()
+    assert red_rule is not None
+    assert red_rule.match.colour_point == "nebula-red"
+
+
+def test_new_green_cyan_and_yellow_adjustments_use_matching_defaults(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("green")
+    green_rule = view_model._selected_rule_model()
+    assert green_rule is not None
+    assert green_rule.match.colour_point == "nebula-green"
+    assert isinstance(green_rule.transform, ColourAmountTransform)
+    assert green_rule.transform.channel == "green"
+
+    view_model.create_adjustment("cyan")
+    cyan_rule = view_model._selected_rule_model()
+    assert cyan_rule is not None
+    assert cyan_rule.match.colour_point == "nebula-cyan"
+    assert isinstance(cyan_rule.transform, ShiftColourPointTransform)
+    assert cyan_rule.transform.target_colour_point == "nebula-cyan"
+
+    view_model.create_adjustment("yellow")
+    yellow_rule = view_model._selected_rule_model()
+    assert yellow_rule is not None
+    assert yellow_rule.match.colour_point == "nebula-yellow"
+    assert isinstance(yellow_rule.transform, ShiftColourPointTransform)
+    assert yellow_rule.transform.target_colour_point == "nebula-yellow"
+
+
+def test_new_non_colour_adjustments_do_not_default_to_colour_points(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("saturation")
+    saturation_rule = view_model._selected_rule_model()
+    assert saturation_rule is not None
+    assert saturation_rule.match.colour_point is None
+
+    view_model.create_adjustment("brightness")
+    brightness_rule = view_model._selected_rule_model()
+    assert brightness_rule is not None
+    assert brightness_rule.match.colour_point is None
+
+
+def test_changing_red_adjustment_amount_updates_preview_image(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    sample = _preview_sample(view_model)
+    created_id = view_model.create_adjustment_from_selection("red", sample)
+    assert created_id is not None
+    before = view_model._current_preview
+    assert before is not None
+
+    from engine.preview import render_preview_image
+
+    def immediate_render(*, immediate: bool = False) -> None:
+        _ = immediate
+        working_documents = view_model._working_documents
+        assert working_documents is not None
+        view_model._active_job_id += 1
+        view_model.apply_preview_result(
+            view_model._active_job_id,
+            render_preview_image(
+                working_documents.bundle.model_copy(deep=True),
+                include_provenance=False,
+                use_cached_sources=True,
+            ),
+        )
+
+    monkeypatch.setattr(view_model, "request_preview_render", immediate_render)
+
+    view_model.select_adjustment(created_id)
+    view_model.set_selected_adjustment_primary_value(1.8)
+
+    after = view_model._current_preview
+    assert after is not None
+    assert not np.allclose(before.image.data, after.image.data, atol=1e-6)
+
+
+def test_region_drawing_editing_and_scope_assignment_use_normalized_geometry(
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.begin_region_drawing()
+    view_model.add_region_point(0.1, 0.2)
+    view_model.add_region_point(0.4, 0.2)
+    view_model.add_region_point(0.4, 0.6)
+    view_model.finish_region_drawing()
+
+    region = view_model.selected_region_summary()
+    assert region is not None
+    assert region.polygon == [(0.1, 0.2), (0.4, 0.2), (0.4, 0.6)]
+
+    view_model.move_region_vertex(region.region_id, 1, 0.45, 0.25)
+    moved = view_model.selected_region_summary()
+    assert moved is not None
+    assert moved.polygon[1] == (0.45, 0.25)
+
+    view_model.insert_region_vertex(region.region_id, 2, 0.5, 0.45)
+    inserted = view_model.selected_region_summary()
+    assert inserted is not None
+    assert len(inserted.polygon) == 4
+
+    view_model.select_adjustment("reveal-faint-blue")
+    view_model.set_selected_adjustment_apply_everywhere(False)
+    view_model.set_selected_adjustment_regions([region.region_id])
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.region_ids == [region.region_id]
+
+
+def test_region_union_references_and_deletion_keep_references_safe(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    for points in [
+        [(0.1, 0.1), (0.3, 0.1), (0.3, 0.3)],
+        [(0.6, 0.6), (0.8, 0.6), (0.8, 0.8)],
+    ]:
+        view_model.begin_region_drawing()
+        for x, y in points:
+            view_model.add_region_point(x, y)
+        view_model.finish_region_drawing()
+
+    region_ids = [
+        summary.region_id
+        for summary in view_model.region_summaries()
+        if summary.region_id != "lower-right"
+    ]
+    assert len(region_ids) == 2
+
+    view_model.select_adjustment("reveal-faint-blue")
+    view_model.set_selected_adjustment_regions(region_ids)
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.region_ids == region_ids
+
+    view_model.select_region(region_ids[0])
+    view_model.remove_selected_region()
+    remaining_summary = view_model.selected_adjustment_summary()
+    assert remaining_summary is not None
+    assert region_ids[0] not in remaining_summary.region_ids
+    assert region_ids[1] in remaining_summary.region_ids
+
+
+def test_semantic_change_list_and_individual_revert_preserve_unrelated_changes(
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    selected = view_model.selected_rule()
+    assert selected is not None
+    view_model.set_rule_amount(selected.amount + 0.15)
+
+    view_model.begin_region_drawing()
+    view_model.add_region_point(0.2, 0.2)
+    view_model.add_region_point(0.5, 0.2)
+    view_model.add_region_point(0.5, 0.5)
+    view_model.finish_region_drawing()
+    new_region = view_model.selected_region_summary()
+    assert new_region is not None
+
+    changes = view_model.unsaved_changes()
+    region_change = next(change for change in changes if change.entity_type == "region")
+    view_model.revert_change(region_change.key)
+
+    still_changed = view_model.selected_rule()
+    assert still_changed is not None
+    assert still_changed.amount == selected.amount + 0.15
+    assert all(
+        summary.region_id != new_region.region_id
+        for summary in view_model.region_summaries()
+    )
+
+    assert view_model.save_changes() is True
+    assert view_model.dirty is False
+    assert view_model.unsaved_changes() == []

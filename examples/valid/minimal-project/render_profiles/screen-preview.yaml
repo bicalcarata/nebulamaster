@@ -1,0 +1,11 @@
+id: screen-preview
+name: Screen Preview
+profile:
+  type: screen
+  format: png
+  color_space: srgb
+  bit_depth: 8
+  width_px: 1280
+  interpolation: lanczos
+preview:
+  cacheable: true

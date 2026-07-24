@@ -1,0 +1,9 @@
+id: screen
+name: Screen
+output:
+  format: png
+  color_space: srgb
+  bit_depth: 16
+  dimensions:
+    mode: source
+

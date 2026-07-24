@@ -1,0 +1,23 @@
+[project]
+name = "nebula-engine"
+version = "0.1.0"
+description = "Validation engine for Nebula Master renderer"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "nebula-image-io",
+  "nebula-project-model",
+  "nebula-project-io",
+  "pydantic>=2.8",
+]
+
+[tool.uv.sources]
+nebula-image-io = { workspace = true }
+nebula-project-model = { workspace = true }
+nebula-project-io = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/engine"]

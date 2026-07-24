@@ -1,0 +1,12 @@
+id: screen-4k
+name: Screen 4K
+profile:
+  type: screen
+  format: png
+  color_space: srgb
+  bit_depth: 8
+  width_px: 3840
+  height_px: 2160
+  interpolation: lanczos
+preview:
+  cacheable: true

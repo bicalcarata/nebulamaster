@@ -1,0 +1,50 @@
+id: default-nebula
+colour_points:
+- id: nebula-blue
+  name: Nebula Blue Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.30980390310287476
+    - 0.09803921729326248
+    - 0.4274509847164154
+- id: star-blue
+  name: Star Blue Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.62
+    - 0.71
+    - 0.95
+- id: nebula-red
+  name: Nebula Red Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.58
+    - 0.2
+    - 0.18
+- id: nebula-cyan
+  name: Nebula Cyan Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.24
+    - 0.58
+    - 0.62
+- id: nebula-green
+  name: Nebula Green Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.26
+    - 0.44
+    - 0.22
+- id: nebula-yellow
+  name: Nebula Yellow Point
+  value:
+    model: working-rgb
+    channels:
+    - 0.64
+    - 0.56
+    - 0.2

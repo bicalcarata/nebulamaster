@@ -1,0 +1,9 @@
+id: lower-right
+name: Lower Right
+feather:
+  radius: 0.08
+polygon:
+  - [0.56, 0.44]
+  - [0.90, 0.44]
+  - [0.93, 0.82]
+  - [0.60, 0.84]

@@ -1,0 +1,118 @@
+schema_version: 1
+project:
+  id: horsehead-demo
+  name: Horsehead Demo
+  created_at: '2026-07-20T00:00:00Z'
+sources:
+- id: source-01
+  path: sources/source-01.tif
+  name: Base Source
+  role: base
+  reference: true
+  enabled: true
+  weight: 1.0
+  checksum: sha256:demo-01
+  alignment:
+    mode: none
+- id: source-02
+  path: sources/source-02.tif
+  name: Blue Source
+  role: blue
+  reference: false
+  enabled: true
+  weight: 0.75
+  checksum: sha256:demo-02
+  alignment:
+    mode: translation
+    max_shift_px: 32.0
+- id: source-03
+  path: sources/source-03.tif
+  name: Neutral Source
+  role: neutral
+  reference: false
+  enabled: true
+  weight: 0.4
+  checksum: sha256:demo-03
+  alignment:
+    mode: manual
+    x_px: 0.0
+    y_px: 0.0
+semantic_channels:
+- id: nebula
+  name: Nebula
+  description: Main nebula emission
+- id: background
+  name: Background
+palettes:
+- id: default-nebula
+  path: palettes/default-nebula.yaml
+regions: []
+render_profiles:
+- id: screen-preview
+  path: render_profiles/screen-preview.yaml
+- id: screen-4k
+  path: render_profiles/screen-4k.yaml
+- id: print-42x29.7cm
+  path: render_profiles/print-42x29.7cm.yaml
+- id: archive
+  path: render_profiles/archive.yaml
+plugins:
+  path: plugins/lock.yaml
+crop:
+  x: 0.0
+  y: 0.0
+  width: 1.0
+  height: 1.0
+source_mix:
+  mode: weighted_average
+rules:
+- id: reveal-faint-blue
+  name: Reveal faint blue glow
+  enabled: true
+  selection_source: original
+  target: nebula
+  match:
+    colour_point: nebula-blue
+    colour_range: 0.18
+    brightness:
+      min: 0.2
+      max: 0.5
+    softness: 0.5
+    regions: []
+  regions: []
+  transform:
+    type: colour_amount
+    channel: blue
+    amount: 2.0
+    preserve_luminance: true
+- id: red
+  name: Red
+  enabled: true
+  selection_source: current
+  target: nebula
+  match:
+    colour_point: nebula-red
+    colour_range: 0.1
+    brightness:
+      min: 0.0
+      max: 1.0
+    softness: 0.35
+    regions: []
+  regions: []
+  transform:
+    type: colour_amount
+    channel: red
+    amount: 0.0
+    preserve_luminance: true
+- id: brightness
+  name: Brightness
+  enabled: true
+  selection_source: current
+  target: nebula
+  match:
+    softness: 0.5
+    regions: []
+  regions: []
+  transform:
+    type: brightness
+    amount: 2.0

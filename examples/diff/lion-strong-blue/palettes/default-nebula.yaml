@@ -1,0 +1,7 @@
+id: default-nebula
+colour_points:
+  - id: blue-point
+    name: Blue Point
+    value:
+      model: working-rgb
+      channels: [0.14, 0.24, 0.72]
