@@ -13,6 +13,7 @@ from project_model import (
     DeclarativeRule,
     DiffExplanationEntry,
     DiffProjectIdentity,
+    LevelsTransform,
     PluginLockEntry,
     ProjectBundle,
     ProjectDiffChange,
@@ -731,6 +732,10 @@ def _compare_rules(
                     "increased" if rule_b.transform.amount > rule_a.transform.amount else "reduced"
                 )
                 summary = f"{rule_b.name} saturation was {direction}."
+            elif isinstance(rule_a.transform, LevelsTransform) and isinstance(
+                rule_b.transform, LevelsTransform
+            ):
+                summary = f"{rule_b.name} levels changed."
             elif isinstance(rule_a.transform, ColourSmoothingTransform) and isinstance(
                 rule_b.transform, ColourSmoothingTransform
             ):

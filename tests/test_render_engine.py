@@ -8,6 +8,7 @@ import numpy as np
 import yaml
 from engine import EXIT_INPUT_ERROR, EXIT_VALIDATION_SUCCESS
 from engine.render import apply_crop, plan_render, render_output
+from engine.selection import apply_levels_transform
 from image_io import CanonicalImage, resize_exact
 from PIL import Image
 from project_model import CropDeclaration, PrintRenderProfile, ScreenRenderProfile
@@ -227,6 +228,30 @@ def test_print_dimension_calculations_for_cm_and_inches() -> None:
 
     assert plan_cm.output_size.model_dump() == {"width": 4961, "height": 3508}
     assert plan_inches.output_size.model_dump() == {"width": 2400, "height": 3000}
+
+
+def test_levels_transform_affects_dark_pixels_more_than_bright_pixels() -> None:
+    image = np.asarray(
+        [
+            [[0.10, 0.10, 0.10], [0.90, 0.90, 0.90]],
+        ],
+        dtype=np.float32,
+    )
+    weights = np.ones((1, 2), dtype=np.float32)
+
+    transformed = apply_levels_transform(
+        image,
+        weights,
+        darkest=2.0,
+        dark=1.0,
+        mid=1.0,
+        light=1.0,
+        brightest=1.0,
+    )
+
+    dark_delta = float(transformed[0, 0, 0] - image[0, 0, 0])
+    bright_delta = float(transformed[0, 1, 0] - image[0, 1, 0])
+    assert dark_delta > bright_delta
 
 
 def test_normalized_crop_calculation_and_application() -> None:

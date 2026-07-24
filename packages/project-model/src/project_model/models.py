@@ -216,6 +216,15 @@ class SaturationTransform(StrictModel):
     amount: float = Field(ge=0.0, le=2.0)
 
 
+class LevelsTransform(StrictModel):
+    type: Literal["levels"]
+    darkest: float = Field(default=1.0, ge=0.0, le=4.0)
+    dark: float = Field(default=1.0, ge=0.0, le=4.0)
+    mid: float = Field(default=1.0, ge=0.0, le=4.0)
+    light: float = Field(default=1.0, ge=0.0, le=4.0)
+    brightest: float = Field(default=1.0, ge=0.0, le=4.0)
+
+
 class ColourSmoothingTransform(StrictModel):
     type: Literal["colour_smoothing"]
     radius: float = Field(ge=0.0, le=1.0)
@@ -227,6 +236,7 @@ TransformationDeclaration = Annotated[
     | ShiftColourPointTransform
     | BrightnessTransform
     | SaturationTransform
+    | LevelsTransform
     | ColourSmoothingTransform,
     Field(discriminator="type"),
 ]

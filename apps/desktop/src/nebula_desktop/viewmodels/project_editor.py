@@ -31,6 +31,7 @@ from project_model import (
     DeclarativeRule,
     Feather,
     FileReference,
+    LevelsTransform,
     PrintRenderProfile,
     PrintUnits,
     ProjectBundle,
@@ -60,6 +61,7 @@ AdjustmentKind = Literal[
     "cyan",
     "yellow",
     "brightness",
+    "levels",
     "saturation",
     "smoothness",
 ]
@@ -87,6 +89,8 @@ class AdjustmentSummary:
     primary_value: float | None
     secondary_label: str | None
     secondary_value: float | None
+    level_labels: tuple[str, ...]
+    level_values: tuple[float, ...]
     helper_text: str
     region_ids: list[str]
 
@@ -163,6 +167,8 @@ def _type_label(rule: DeclarativeRule) -> str:
         return _label_from_colour_point_id(transform.target_colour_point)
     if isinstance(transform, BrightnessTransform):
         return "Brightness"
+    if isinstance(transform, LevelsTransform):
+        return "Levels"
     if isinstance(transform, SaturationTransform):
         return "Saturation"
     if isinstance(transform, ColourSmoothingTransform):
@@ -186,6 +192,11 @@ def _helper_text(rule: DeclarativeRule) -> str:
         return f"Shifts the selected glow towards a more {target} appearance."
     if isinstance(transform, BrightnessTransform):
         return "Controls how bright this selected area appears in the final image."
+    if isinstance(transform, LevelsTransform):
+        return (
+            "Adjusts five tonal bands from the darkest parts of the image "
+            "to the brightest highlights."
+        )
     if isinstance(transform, SaturationTransform):
         return "Controls how vivid the selected colours appear in the final image."
     if isinstance(transform, ColourSmoothingTransform):
@@ -243,6 +254,7 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "black": (),
         "shadows": (),
         "brightness": (),
+        "levels": (),
         "saturation": (),
         "smoothness": (),
     }[kind]
@@ -565,6 +577,8 @@ class ProjectEditorViewModel(QObject):
                 else:
                     primary_label = "Less / More"
                 primary_value = transform.amount
+            elif isinstance(transform, LevelsTransform):
+                editable = True
             elif isinstance(transform, SaturationTransform):
                 editable = True
                 primary_label = "Less / More"
@@ -596,6 +610,18 @@ class ProjectEditorViewModel(QObject):
                     primary_value=primary_value,
                     secondary_label=secondary_label,
                     secondary_value=secondary_value,
+                    level_labels=("Darkest", "Dark", "Mid", "Light", "Brightest")
+                    if isinstance(transform, LevelsTransform)
+                    else (),
+                    level_values=(
+                        transform.darkest,
+                        transform.dark,
+                        transform.mid,
+                        transform.light,
+                        transform.brightest,
+                    )
+                    if isinstance(transform, LevelsTransform)
+                    else (),
                     helper_text=_helper_text(rule),
                     region_ids=list(rule.regions),
                 )
@@ -952,6 +978,8 @@ class ProjectEditorViewModel(QObject):
             transform.amount = max(0.0, min(1.0, value))
         elif isinstance(transform, BrightnessTransform):
             transform.amount = max(0.0, min(4.0, value))
+        elif isinstance(transform, LevelsTransform):
+            return
         elif isinstance(transform, SaturationTransform):
             transform.amount = max(0.0, min(2.0, value))
         elif isinstance(transform, ColourSmoothingTransform):
@@ -967,6 +995,25 @@ class ProjectEditorViewModel(QObject):
         if isinstance(rule.transform, ColourSmoothingTransform):
             rule.transform.radius = value
             self._after_metadata_change(render=True)
+
+    def set_selected_adjustment_level_value(self, index: int, value: float) -> None:
+        rule = self._selected_rule_model()
+        if rule is None or not isinstance(rule.transform, LevelsTransform):
+            return
+        clamped = max(0.0, min(4.0, value))
+        if index == 0:
+            rule.transform.darkest = clamped
+        elif index == 1:
+            rule.transform.dark = clamped
+        elif index == 2:
+            rule.transform.mid = clamped
+        elif index == 3:
+            rule.transform.light = clamped
+        elif index == 4:
+            rule.transform.brightest = clamped
+        else:
+            return
+        self._after_metadata_change(render=True)
 
     def set_selected_adjustment_apply_everywhere(self, apply_everywhere: bool) -> None:
         rule = self._selected_rule_model()
@@ -1453,6 +1500,7 @@ class ProjectEditorViewModel(QObject):
             "cyan": "Cyan",
             "yellow": "Yellow",
             "brightness": "Brightness",
+            "levels": "Levels",
             "saturation": "Saturation",
             "smoothness": "Colour Smoothness",
         }[kind]
@@ -1467,6 +1515,7 @@ class ProjectEditorViewModel(QObject):
             "cyan": "Selected Cyan",
             "yellow": "Selected Yellow",
             "brightness": "Selected Brightness",
+            "levels": "Selected Levels",
             "saturation": "Selected Saturation",
             "smoothness": "Selected Smoothing",
         }[kind]
@@ -1507,6 +1556,7 @@ class ProjectEditorViewModel(QObject):
             ColourAmountTransform
             | ShiftColourPointTransform
             | BrightnessTransform
+            | LevelsTransform
             | SaturationTransform
             | ColourSmoothingTransform
         )
@@ -1576,6 +1626,19 @@ class ProjectEditorViewModel(QObject):
             )
         elif kind == "brightness":
             transform = BrightnessTransform(type="brightness", amount=1.12)
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "levels":
+            transform = LevelsTransform(
+                type="levels",
+                darkest=1.0,
+                dark=1.0,
+                mid=1.0,
+                light=1.0,
+                brightest=1.0,
+            )
             match = RuleMatch(
                 colour_point=None,
                 softness=0.45,

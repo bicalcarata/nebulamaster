@@ -24,6 +24,7 @@ from project_io import read_yaml_mapping
 from project_model import (
     BrightnessTransform,
     ColourAmountTransform,
+    LevelsTransform,
     SaturationTransform,
     ShiftColourPointTransform,
 )
@@ -1163,6 +1164,47 @@ def test_new_non_colour_adjustments_do_not_default_to_colour_points(tmp_path: Pa
     brightness_rule = view_model._selected_rule_model()
     assert brightness_rule is not None
     assert brightness_rule.match.colour_point is None
+
+    view_model.create_adjustment("levels")
+    levels_rule = view_model._selected_rule_model()
+    assert levels_rule is not None
+    assert levels_rule.match.colour_point is None
+
+
+def test_new_levels_adjustment_uses_five_band_defaults(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("levels")
+    levels_rule = view_model._selected_rule_model()
+    assert levels_rule is not None
+    assert levels_rule.name == "Levels"
+    assert isinstance(levels_rule.transform, LevelsTransform)
+    assert levels_rule.transform.darkest == 1.0
+    assert levels_rule.transform.dark == 1.0
+    assert levels_rule.transform.mid == 1.0
+    assert levels_rule.transform.light == 1.0
+    assert levels_rule.transform.brightest == 1.0
+
+
+def test_levels_adjustment_editor_shows_five_band_controls(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("levels")
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Levels"
+    assert summary.level_labels == ("Darkest", "Dark", "Mid", "Light", "Brightest")
+    assert summary.level_values == (1.0, 1.0, 1.0, 1.0, 1.0)
+    assert window.level_inputs_container.isHidden() is False
 
 
 def test_black_point_and_shadows_use_distinct_editor_language(

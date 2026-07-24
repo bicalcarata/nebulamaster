@@ -256,6 +256,41 @@ def apply_saturation_transform(
     return apply_weighted_image_blend(current_rgb, transformed, weights)
 
 
+def apply_levels_transform(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    darkest: float,
+    dark: float,
+    mid: float,
+    light: float,
+    brightest: float,
+) -> np.ndarray:
+    linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0])).astype(np.float32, copy=False)
+    centers = np.asarray([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float32)
+    amounts = np.asarray([darkest, dark, mid, light, brightest], dtype=np.float32)
+
+    factor = np.zeros_like(luminance, dtype=np.float32)
+    factor[luminance <= centers[0]] = amounts[0]
+    factor[luminance >= centers[-1]] = amounts[-1]
+
+    for index in range(len(centers) - 1):
+        left = centers[index]
+        right = centers[index + 1]
+        in_segment = np.logical_and(luminance >= left, luminance <= right)
+        if not np.any(in_segment):
+            continue
+        t = ((luminance[in_segment] - left) / max(right - left, EPSILON)).astype(
+            np.float32,
+            copy=False,
+        )
+        factor[in_segment] = ((1.0 - t) * amounts[index]) + (t * amounts[index + 1])
+
+    transformed = np.clip(linear * factor[..., None], 0.0, 1.0).astype(np.float32, copy=False)
+    return apply_weighted_image_blend(current_rgb, transformed, weights)
+
+
 def box_blur(image_rgb: np.ndarray, radius_pixels: int) -> np.ndarray:
     if radius_pixels <= 0:
         return image_rgb.astype(np.float32, copy=True)

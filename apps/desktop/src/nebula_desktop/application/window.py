@@ -361,6 +361,23 @@ class MainWindow(QMainWindow):
         self.primary_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
         self.primary_input.setKeyboardTracking(False)
 
+        self.level_inputs_container = QWidget(self)
+        levels_layout = QVBoxLayout(self.level_inputs_container)
+        levels_layout.setContentsMargins(0, 0, 0, 0)
+        levels_layout.setSpacing(8)
+        self.level_labels: list[QLabel] = []
+        self.level_inputs: list[QDoubleSpinBox] = []
+        for level_name in ["Darkest", "Dark", "Mid", "Light", "Brightest"]:
+            label = QLabel(level_name)
+            label.setStyleSheet("font-weight: 600;")
+            input_widget = QDoubleSpinBox()
+            input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
+            input_widget.setKeyboardTracking(False)
+            levels_layout.addWidget(label)
+            levels_layout.addWidget(input_widget)
+            self.level_labels.append(label)
+            self.level_inputs.append(input_widget)
+
         self.secondary_label = QLabel("Reach")
         self.secondary_label.setStyleSheet("font-weight: 600;")
         self.secondary_slider = QSlider(Qt.Orientation.Horizontal)
@@ -381,6 +398,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(point_layout)
         layout.addWidget(self.primary_label)
         layout.addWidget(self.primary_input)
+        layout.addWidget(self.level_inputs_container)
         layout.addWidget(self.secondary_label)
         layout.addWidget(self.secondary_slider)
         layout.addWidget(self.secondary_value_label)
@@ -511,6 +529,10 @@ class MainWindow(QMainWindow):
         self.adjustment_enabled_checkbox.toggled.connect(self.view_model.set_selected_adjustment_enabled)
         self.target_selector.currentIndexChanged.connect(self._on_target_changed)
         self.primary_input.valueChanged.connect(self._on_primary_value_changed)
+        for index, input_widget in enumerate(self.level_inputs):
+            input_widget.valueChanged.connect(
+                lambda value, level_index=index: self._on_level_value_changed(level_index, value)
+            )
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
         self.region_scope_list.itemChanged.connect(self._on_region_scope_item_changed)
@@ -762,6 +784,10 @@ class MainWindow(QMainWindow):
             lambda: self.view_model.create_adjustment("brightness"),
         )
         menu.addAction(
+            "Add Levels adjustment",
+            lambda: self.view_model.create_adjustment("levels"),
+        )
+        menu.addAction(
             "Add Saturation adjustment",
             lambda: self.view_model.create_adjustment("saturation"),
         )
@@ -874,6 +900,7 @@ class MainWindow(QMainWindow):
             self.colour_swatch.setVisible(False)
             self.colour_point_label.setVisible(False)
             self.pick_button.setEnabled(False)
+            self.level_inputs_container.setVisible(False)
             return
 
         self.adjustment_name_label.setText(summary.name)
@@ -912,9 +939,15 @@ class MainWindow(QMainWindow):
         self.pick_button.setText(f"Pick {point_label}")
         self.pick_button.setEnabled(has_colour_controls and summary.editable)
 
-        self.primary_label.setVisible(summary.primary_label is not None)
-        self.primary_input.setVisible(summary.primary_value is not None)
-        if summary.primary_label is not None and summary.primary_value is not None:
+        has_levels_controls = bool(summary.level_values)
+        self.level_inputs_container.setVisible(has_levels_controls)
+        self.primary_label.setVisible(not has_levels_controls and summary.primary_label is not None)
+        self.primary_input.setVisible(not has_levels_controls and summary.primary_value is not None)
+        if (
+            not has_levels_controls
+            and summary.primary_label is not None
+            and summary.primary_value is not None
+        ):
             self.primary_label.setText(summary.primary_label)
             if summary.transform_type == "colour_amount":
                 spin_value = max(0.0, min(100.0, (summary.primary_value - 1.0) * 100.0))
@@ -952,6 +985,21 @@ class MainWindow(QMainWindow):
                 self.primary_input.setSingleStep(spin_step)
                 self.primary_input.setSuffix(spin_suffix)
                 self.primary_input.setValue(spin_value)
+        if has_levels_controls:
+            for label_widget, input_widget, level_label, level_value in zip(
+                self.level_labels,
+                self.level_inputs,
+                summary.level_labels,
+                summary.level_values,
+                strict=False,
+            ):
+                label_widget.setText(level_label)
+                with QSignalBlocker(input_widget):
+                    input_widget.setDecimals(0)
+                    input_widget.setRange(-100.0, 100.0)
+                    input_widget.setSingleStep(1.0)
+                    input_widget.setSuffix("%")
+                    input_widget.setValue(_brightness_amount_to_ui(level_value))
 
         self.secondary_label.setVisible(summary.secondary_label is not None)
         self.secondary_slider.setVisible(summary.secondary_value is not None)
@@ -1143,6 +1191,12 @@ class MainWindow(QMainWindow):
         else:
             normalized = 1.0 + (value / 100.0)
         self.view_model.set_selected_adjustment_primary_value(normalized)
+
+    def _on_level_value_changed(self, index: int, value: float) -> None:
+        summary = self.view_model.selected_adjustment_summary()
+        if summary is None or not summary.level_values:
+            return
+        self.view_model.set_selected_adjustment_level_value(index, _brightness_ui_to_amount(value))
 
     def _on_target_changed(self, index: int) -> None:
         if index < 0:

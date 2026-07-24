@@ -11,6 +11,7 @@ from project_model import (
     ColourPoint,
     ColourSmoothingTransform,
     DeclarativeRule,
+    LevelsTransform,
     ProjectBundle,
     SaturationTransform,
     ShiftColourPointTransform,
@@ -22,6 +23,7 @@ from .selection import (
     apply_brightness_transform,
     apply_colour_amount,
     apply_colour_smoothing,
+    apply_levels_transform,
     apply_saturation_transform,
     apply_shift_colour_point,
     brightness_weight,
@@ -158,6 +160,16 @@ def _apply_transform(
         return apply_brightness_transform(current_image, weights, amount=transform.amount)
     if isinstance(transform, SaturationTransform):
         return apply_saturation_transform(current_image, weights, amount=transform.amount)
+    if isinstance(transform, LevelsTransform):
+        return apply_levels_transform(
+            current_image,
+            weights,
+            darkest=transform.darkest,
+            dark=transform.dark,
+            mid=transform.mid,
+            light=transform.light,
+            brightest=transform.brightest,
+        )
     if isinstance(transform, ColourSmoothingTransform):
         return apply_colour_smoothing(
             current_image,
