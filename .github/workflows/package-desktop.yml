@@ -154,4 +154,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa "${major_tag}" -m "Latest ${major_tag} release ${RELEASE_TAG}"
-          git push origin "refs/tags/${major_tag}" --force
+          if ! git push origin "refs/tags/${major_tag}" --force; then
+            echo "Warning: could not update movable tag ${major_tag}. The immutable release ${RELEASE_TAG} is still published." >&2
+          fi
