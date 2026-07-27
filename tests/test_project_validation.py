@@ -25,7 +25,13 @@ def test_project_model_accepts_dark_dust_target_and_settings() -> None:
             "schema_version": 1,
             "project": {"id": "dark-dust-demo", "name": "Dark Dust Demo"},
             "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
-            "semantic_channels": [{"id": "nebula", "name": "Nebula"}],
+            "semantic_channels": [
+                {"id": "combined", "name": "Combined Image"},
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "stars", "name": "Stars"},
+                {"id": "dark_dust", "name": "Dark Dust"},
+                {"id": "background", "name": "Background"},
+            ],
             "palettes": [],
             "regions": [],
             "render_profiles": [],
@@ -62,7 +68,13 @@ def test_project_model_accepts_faux_palette_transform() -> None:
                 "schema_version": 1,
                 "project": {"id": "faux-demo", "name": "Faux Demo"},
                 "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
-                "semantic_channels": [{"id": "nebula", "name": "Nebula"}],
+                "semantic_channels": [
+                    {"id": "combined", "name": "Combined Image"},
+                    {"id": "nebula", "name": "Nebula"},
+                    {"id": "stars", "name": "Stars"},
+                    {"id": "dark_dust", "name": "Dark Dust"},
+                    {"id": "background", "name": "Background"},
+                ],
                 "palettes": [],
                 "regions": [],
                 "render_profiles": [],
@@ -130,3 +142,54 @@ def test_unknown_fields_fail_validation() -> None:
 
     assert report.valid is False
     assert any(issue.code == "project-schema" for issue in report.issues)
+
+
+def test_validate_rejects_rule_target_that_is_not_declared_semantic_channel(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "undeclared-stars-target"
+    project_dir.mkdir()
+    (project_dir / "sources").mkdir()
+    (project_dir / "plugins").mkdir()
+    (project_dir / "sources/source.png").write_bytes(b"not-an-image-but-exists")
+    (project_dir / "plugins/lock.yaml").write_text("plugins: []\n", encoding="utf-8")
+    (project_dir / "project.yaml").write_text(
+        """
+schema_version: 1
+project:
+  id: undeclared-stars-target
+  name: Undeclared Stars Target
+sources:
+  - id: source-01
+    path: sources/source.png
+    enabled: true
+semantic_channels:
+  - id: nebula
+    name: Nebula
+  - id: background
+    name: Background
+palettes: []
+regions: []
+render_profiles: []
+plugins:
+  path: plugins/lock.yaml
+rules:
+  - id: stars-only
+    name: Stars Only
+    enabled: true
+    selection_source: current
+    target: stars
+    match:
+      softness: 0.5
+    transform:
+      type: brightness
+      amount: 1.1
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = validate_project(project_dir)
+
+    assert report.valid is False
+    assert any(issue.code == "unknown-semantic-channel" for issue in report.issues)

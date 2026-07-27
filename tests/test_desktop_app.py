@@ -138,6 +138,13 @@ def test_scaffold_project_from_tiff_creates_valid_project(tmp_path: Path) -> Non
     assert payload["project"]["name"] == "Horsehead First Pass"
     assert payload["sources"][0]["path"] == "sources/source-01.tiff"
     assert payload["rules"] == []
+    assert [channel["id"] for channel in payload["semantic_channels"]] == [
+        "combined",
+        "nebula",
+        "stars",
+        "dark_dust",
+        "background",
+    ]
     assert (project_dir / "palettes/default-nebula.yaml").is_file()
     assert (project_dir / "render_profiles/screen-preview.yaml").is_file()
     assert (project_dir / "plugins/lock.yaml").is_file()

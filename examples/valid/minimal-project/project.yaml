@@ -38,9 +38,18 @@ sources:
     x_px: 0.0
     y_px: 0.0
 semantic_channels:
+- id: combined
+  name: Combined Image
+  description: Full image before semantic targeting
 - id: nebula
   name: Nebula
   description: Main nebula emission
+- id: stars
+  name: Stars
+  description: Compact stellar sources
+- id: dark_dust
+  name: Dark Dust
+  description: Broad dark structures relative to local surroundings
 - id: background
   name: Background
 palettes:

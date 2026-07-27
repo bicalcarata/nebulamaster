@@ -9,8 +9,14 @@ sources:
     enabled: true
     checksum: sha256:lion-print
 semantic_channels:
+  - id: combined
+    name: Combined Image
   - id: nebula
     name: Nebula
+  - id: stars
+    name: Stars
+  - id: dark_dust
+    name: Dark Dust
   - id: background
     name: Background
 palettes:
