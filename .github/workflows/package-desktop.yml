@@ -15,11 +15,11 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.release_tag != '' && (startsWith(inputs.release_tag, 'v') && inputs.release_tag || format('v{0}', inputs.release_tag)) || github.ref_name }}
 
 jobs:
   prepare-release:
-    if: ${{ startsWith(inputs.release_tag || github.ref_name, 'v') }}
+    if: ${{ startsWith(inputs.release_tag != '' && (startsWith(inputs.release_tag, 'v') && inputs.release_tag || format('v{0}', inputs.release_tag)) || github.ref_name, 'v') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -39,7 +39,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -84,7 +84,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Inno Setup
         shell: powershell
@@ -125,7 +125,7 @@ jobs:
           }
 
   publish-release:
-    if: ${{ startsWith(inputs.release_tag || github.ref_name, 'v') }}
+    if: ${{ startsWith(inputs.release_tag != '' && (startsWith(inputs.release_tag, 'v') && inputs.release_tag || format('v{0}', inputs.release_tag)) || github.ref_name, 'v') }}
     needs:
       - prepare-release
       - package-macos
