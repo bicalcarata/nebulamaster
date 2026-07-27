@@ -19,6 +19,44 @@ def test_load_valid_project_file() -> None:
     assert project.dark_dust.enabled is True
 
 
+def test_legacy_project_missing_builtin_semantic_channels_is_normalized() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "legacy-demo", "name": "Legacy Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "background", "name": "Background"},
+            ],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "combined-brightness",
+                    "name": "Combined Brightness",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "combined",
+                    "match": {"softness": 0.5},
+                    "transform": {"type": "brightness", "amount": 1.1},
+                }
+            ],
+        }
+    )
+
+    assert [channel.id for channel in project.semantic_channels[:5]] == [
+        "combined",
+        "nebula",
+        "stars",
+        "dark_dust",
+        "background",
+    ]
+    assert project.rules[0].target == "combined"
+
+
 def test_project_model_accepts_dark_dust_target_and_settings() -> None:
     project = ProjectFile.model_validate(
         {
@@ -144,10 +182,10 @@ def test_unknown_fields_fail_validation() -> None:
     assert any(issue.code == "project-schema" for issue in report.issues)
 
 
-def test_validate_rejects_rule_target_that_is_not_declared_semantic_channel(
+def test_validate_accepts_legacy_builtin_target_and_normalizes_semantic_channels(
     tmp_path: Path,
 ) -> None:
-    project_dir = tmp_path / "undeclared-stars-target"
+    project_dir = tmp_path / "legacy-stars-target"
     project_dir.mkdir()
     (project_dir / "sources").mkdir()
     (project_dir / "plugins").mkdir()
@@ -157,8 +195,8 @@ def test_validate_rejects_rule_target_that_is_not_declared_semantic_channel(
         """
 schema_version: 1
 project:
-  id: undeclared-stars-target
-  name: Undeclared Stars Target
+  id: legacy-stars-target
+  name: Legacy Stars Target
 sources:
   - id: source-01
     path: sources/source.png
@@ -191,5 +229,5 @@ rules:
 
     report = validate_project(project_dir)
 
-    assert report.valid is False
-    assert any(issue.code == "unknown-semantic-channel" for issue in report.issues)
+    assert report.valid is True
+    assert report.issues == []

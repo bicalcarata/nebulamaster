@@ -154,6 +154,35 @@ class SemanticChannel(StrictModel):
     description: str | None = None
 
 
+BUILTIN_SEMANTIC_CHANNELS: tuple[SemanticChannel, ...] = (
+    SemanticChannel(
+        id="combined",
+        name="Combined Image",
+        description="Full image before semantic targeting",
+    ),
+    SemanticChannel(
+        id="nebula",
+        name="Nebula",
+        description="Main nebula emission",
+    ),
+    SemanticChannel(
+        id="stars",
+        name="Stars",
+        description="Compact stellar sources",
+    ),
+    SemanticChannel(
+        id="dark_dust",
+        name="Dark Dust",
+        description="Broad dark structures relative to local surroundings",
+    ),
+    SemanticChannel(
+        id="background",
+        name="Background",
+        description="Background sky and non-selected image content",
+    ),
+)
+
+
 class DarkDustSettings(StrictModel):
     enabled: bool = True
     sensitivity: float = Field(default=0.58, ge=0.0, le=1.0)
@@ -539,6 +568,18 @@ class ProjectFile(StrictModel):
         if value != SCHEMA_VERSION:
             raise ValueError(f"unsupported schema version: {value}")
         return value
+
+    @model_validator(mode="after")
+    def normalize_semantic_channels(self) -> ProjectFile:
+        channels_by_id = {channel.id: channel for channel in self.semantic_channels}
+        normalized: list[SemanticChannel] = []
+
+        for builtin in BUILTIN_SEMANTIC_CHANNELS:
+            normalized.append(channels_by_id.pop(builtin.id, builtin.model_copy(deep=True)))
+
+        normalized.extend(channels_by_id.values())
+        self.semantic_channels = normalized
+        return self
 
 
 class ProjectBundle(StrictModel):
