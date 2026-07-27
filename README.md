@@ -1,166 +1,289 @@
 # Nebula Master
 
-Nebula Master is a declarative nebula image mastering engine.
+**Nebula Master starts where your smart telescope finishes.**
 
-It is not an astrophotography workflow tool and it is not a destructive pixel editor. The product treats imported source images plus project metadata as the only source of truth. Every rendered preview or export is an ephemeral build artifact that can be reproduced at any time from the project.
+Turn images from Dwarf, Seestar, Vaonis and other smart telescopes into finished, shareable pictures without learning specialist astrophotography or photo-editing software.
 
-Think "Terraform for nebula image mastering" rather than "Photoshop for astrophotography".
+Nebula Master starts with the already usable image produced by your telescope software or another application. It does not replace capture, calibration, stacking, plate solving or stretching. Those steps happen upstream. Nebula Master takes the prepared TIFF, PNG or JPEG image and helps you finish it.
 
-## Product Position
+Build your result from simple adjustments that can independently affect the nebula, stars, dark dust, the whole image or a selected area. Reorder, disable, duplicate or remove adjustments and Nebula Master rebuilds the image from the current settings. Apply creative palettes gradually, save and share processing recipes, then export at the right size for screen or print without inventing astronomical detail.
 
-Nebula Master transforms image mastering into a version-controlled declarative workflow:
+Your original image is never changed.
 
-- Source images are immutable.
-- Adjustments are stored as intent, not destructive edits.
-- Rendered outputs are disposable and reproducible.
-- Projects are designed to live naturally in Git.
-- Desktop, CLI, and container workflows all use the same renderer.
+![Nebula Master desktop preview](docs/images/readme/desktop-main.png)
 
-## Core Principles
+## Why Nebula Master?
 
-### Immutable Sources
+### Start with the image you already have
 
-Imported images are never modified in place. After import, all user actions are represented as project metadata, regions, palettes, and render profiles.
+Smart telescopes already produce a useful stacked and stretched image. Nebula Master begins from that point.
 
-### Ephemeral Renders
-
-TIFF, PNG, and JPEG outputs are generated artifacts. Deleting them must lose nothing. Re-rendering the same project with the same inputs and plugin versions must reproduce the same output.
-
-### Declarative Intent
-
-The user describes what they want to see, and the system stores that as rules.
-
-Example:
-
-```yaml
-target: nebula
-match:
-  colour: blue_point
-  brightness: faint
-  region: lower_right
-transform:
-  blue: +35%
+```text
+Smart telescope
+→ prepared image
+→ Nebula Master
+→ finished image
 ```
 
-### Version Controlled
+You open the image you already have and continue from there. No histograms, curves or specialist processing vocabulary are required just to get started.
 
-Projects should commit:
+### Keep every decision editable
 
-- Source images
-- Project metadata
-- Regions
-- Palettes
-- Render profiles
-- Plugin versions
+Each change is an ordered adjustment in a visible processing flow.
 
-Generated renders should not be committed by default.
+You can:
 
-### Non-Destructive
+- reorder adjustments
+- disable an adjustment
+- duplicate an adjustment
+- remove an adjustment
+- change its amount
+- reopen the project later
 
-Every change remains editable. Removing or changing a rule causes the renderer to recompute the final image from immutable inputs.
+Nothing is permanently baked into the source image. The current result always reflects the current adjustment order and enabled state.
 
-## Data Model
+Example flow:
 
-The atomic unit is the pixel.
+```text
+Reduce Stars
+→ Reveal Nebula
+→ Adjust Blue
+→ Faux Hubble
+→ Final Brightness
+```
 
-Each pixel is modeled as structured data with:
+### Adjust the part that matters
 
-- Spatial position
-- Colour channels
-- Derived colour attributes
-- Semantic layer membership
-- Region membership
-- Pipeline metadata
-
-Semantic layers are views over pixel data, not separate edited assets. Typical layers include:
+Any adjustment can target:
 
 - Nebula
 - Stars
-- Background
-- Dust
+- Dark Dust
+- Combined Image
+- a selected region
 
-## User Experience
+That means you can:
 
-The UI is a visual authoring environment for declarative intent.
+- dim stars without weakening the nebula
+- reveal dark dust without washing out the whole sky
+- recolour the nebula while keeping stars more natural
+- apply an effect only inside a selected area
 
-Users work through:
+### Apply creative palettes gradually
 
-- Image preview
-- Numeric adjustment controls
-- Colour points
-- Polygon regions
-- Before/after comparison
-- Semantic targets
-- Helper text
+Faux palettes are ordinary adjustment layers, not all-or-nothing filters.
 
-The UI does not expose histograms, curves, waveforms, or channel plots. Controls describe visible outcomes in human language, such as:
+Available palettes include:
 
-- Nebula Blue Point
-- Star Blue Point
-- Background Darkness
-- Star Presence
-- Black Point
-- Levels
+- Faux Hubble
+- Faux HOO
+- Foraxx-Inspired
+- Gold & Cyan
+- Natural Bi-colour
 
-The UI generates the underlying query rules automatically.
+The `Amount` control behaves like a wet/dry mix:
 
-## Explainability
+- `0%` keeps the incoming image unchanged
+- `100%` applies the full palette
+- values in between blend between the two
 
-Nebula Master should answer:
+These palettes are creative RGB treatments. They do not reconstruct genuine narrowband data from a standard colour image.
 
-- Why does this look like this?
-- What changed between version A and version B?
+### Share processing recipes
 
-These explanations should be semantic rather than pixel-diff oriented. For any sampled point, the system should be able to report:
+Nebula Master projects already store an ordered adjustment flow that can be reused as a processing recipe for another image of the same target.
 
-- Which rules matched
-- Which regions applied
-- Which semantic layers contributed
-- Which palette or colour point was used
-- Which render profile affected the result
+A shared recipe can include:
 
-## Architecture
+- adjustment types
+- order
+- targets
+- palette choices
+- slider values
+- general mask settings
 
-The system is split into two products:
+A shared recipe should not include:
 
-### Desktop
+- the original source image
+- local machine paths
+- private files
 
-Responsibilities:
+Example:
 
-- Import images
-- Create new projects from immutable source images
-- Create colour points
-- Draw regions
-- Edit sliders and rules
-- Preview and compare
-- Preview semantic star and nebula overlays
-- Export screen and print renders through the shared renderer
-- Present history and alternative versions
-- Manage project files
+```text
+Wizard Nebula — Dwarf Dual Band — Gold & Cyan
+```
 
-The desktop application must not contain renderer-only logic.
+Another user can load that recipe structure, apply the same style of processing to their own image, and then fine-tune the sliders to suit their own data.
 
-### Renderer
+Share how the image was processed, not only the finished JPEG.
 
-Responsibilities:
+### Export for screen or print
 
-- Read project state
-- Validate declarative configuration
-- Execute selection and transformation rules
-- Produce previews and final renders
-- Explain pixel outcomes
-- Diff project versions semantically
-- Guarantee reproducible outputs
+The same project can be rendered for:
 
-All rendering paths must use the same engine:
+- social media
+- desktop display
+- television display
+- high-resolution screen output
+- print
 
-- Desktop
-- CLI
-- Container
+You do not need separate manual edits for screen and print versions.
 
-## Command Surface
+### Upscale without inventing detail
 
-The renderer should be exposed through a stable CLI:
+Nebula Master can increase output size while preserving the structure that is already present in the source image.
+
+Make the image larger without inventing new astronomical detail.
+
+More pixels, not imaginary detail.
+
+Upscaling must not fabricate:
+
+- stars
+- nebula structure
+- dust features
+- astronomical detail absent from the source
+
+## Try the beta
+
+Nebula Master currently supports macOS and Windows.
+
+If you use a smart telescope, try the beta with real images and let us know how it behaves on your system.
+
+When reporting feedback, include:
+
+- operating system
+- source telescope or application
+- source image type and dimensions
+- what you attempted
+- what you expected
+- what happened
+- screenshots or project details where useful
+
+## A simple first workflow
+
+1. Export a finished image from your smart telescope application.
+2. Create a Nebula Master project from that image.
+3. Add one or two broad adjustments.
+4. Adjust Stars, Nebula, Dark Dust or the Combined Image independently.
+5. Reorder or disable adjustments until the result looks right.
+6. Optionally add a creative palette.
+7. Compare with the source.
+8. Save the project.
+9. Export for screen or print.
+
+## Supported inputs and devices
+
+Nebula Master is designed for prepared images from:
+
+- Dwarf
+- Seestar
+- Vaonis
+- other smart telescopes
+- any prepared TIFF, PNG or JPEG image
+
+It is intended for image finishing after the telescope software or another application has already done the acquisition and preparation steps.
+
+## Creative palettes
+
+The current desktop app supports these palette adjustments:
+
+- Faux Hubble
+- Faux HOO
+- Foraxx-Inspired
+- Gold & Cyan
+- Natural Bi-colour
+
+Each one is an ordered adjustment that can be enabled, disabled, moved, duplicated, limited to a region, or aimed at a specific semantic target just like any other adjustment.
+
+## Screen, print and upscaling
+
+Final exports render through the shared engine rather than through a desktop-only path.
+
+Screen export currently supports:
+
+- PNG
+- JPEG
+- TIFF
+- native-size or upscaled output
+- `Preserve pixels` upscale mode for mapping the mastered image onto a larger pixel grid without inventing new detail
+
+Print export currently supports:
+
+- PNG
+- JPEG
+- TIFF
+- physical dimensions
+- DPI / PPI targeting
+- shared-renderer output planning
+
+![Screen export dialog](docs/images/readme/export-screen-dialog.png)
+
+## How projects work
+
+Nebula Master keeps the imported source image unchanged.
+
+The project stores editable adjustment instructions, regions, palette choices, render settings and related metadata. Previews and final renders are generated from those instructions, so the project can be reopened, changed later and rendered again.
+
+```text
+Immutable source image
++
+Editable adjustment flow
+↓
+Renderer
+↓
+Screen or print output
+```
+
+Rendered TIFF, PNG and JPEG files are outputs, not the project itself.
+
+## Installation and getting started
+
+If you just want the current build without learning GitHub release mechanics, use these links:
+
+- Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
+- All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
+- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
+- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+
+For a simple walkthrough, see [docs/nebula-master-get-started.pdf](/Users/damon/gitlab/nebulamaster/docs/nebula-master-get-started.pdf).
+
+## Beta testing and feedback
+
+Please test with real images from your telescope workflow.
+
+Useful feedback includes:
+
+- where the workflow felt clear
+- where the wording felt confusing
+- which adjustments gave the result you wanted
+- where the preview or export did not match expectations
+- project files or screenshots that help reproduce a problem
+
+## Advanced technical details
+
+The current repository includes:
+
+- a typed YAML project model built with Pydantic v2
+- shared image loading, validation, preview rendering and export paths
+- a renderer CLI with `nebula validate`, `nebula preview`, `nebula diff`, `nebula git` and `nebula render`
+- a PySide6 desktop authoring client that edits declarative project metadata
+
+Current desktop mastering controls include:
+
+- colour adjustments for Blue, Red, Green, Cyan and Yellow
+- tonal adjustments for Brightness, Saturation, Black Point, Shadows and five-band Levels
+- colour smoothing
+- semantic targets for Combined Image, Nebula, Stars and Dark Dust
+- polygon region scoping
+- image-driven colour-point sampling and adjustment creation
+- screen and print export using the shared renderer
+- packaged desktop application paths for macOS and Windows with a Nebula Master app icon
+
+The desktop preview can also show star, nebula and dark dust overlays so the user can see the current semantic split before applying adjustments.
+
+The renderer is also exposed through a CLI:
 
 ```text
 nebula validate
@@ -170,53 +293,13 @@ nebula diff
 nebula explain
 ```
 
-## Plugin Model
+Plugins may contribute semantic masks, colour palettes, transformations, render profiles and project migrations. They contribute declarative behaviour and must never mutate source images.
 
-Plugins may contribute:
+See [docs/architecture.md](/Users/damon/gitlab/nebulamaster/docs/architecture.md) and [docs/project-format.md](/Users/damon/gitlab/nebulamaster/docs/project-format.md) for the deeper implementation details.
 
-- Semantic masks
-- Colour palettes
-- Transformations
-- Render profiles
-- Project migrations
+## Desktop overview
 
-Plugins contribute declarative behavior. They must never mutate source images.
-
-## Repository Intent
-
-This repository should grow around three stable contracts:
-
-1. Project format
-2. Renderer API and CLI
-3. Desktop editor behavior as a client of the renderer
-
-See [docs/architecture.md](/Users/damon/gitlab/nebulamaster/docs/architecture.md) and [docs/project-format.md](/Users/damon/gitlab/nebulamaster/docs/project-format.md) for the initial specification.
-
-## Current Implementation
-
-The current repository includes:
-
-- A typed YAML project model built with Pydantic v2
-- Shared image loading, validation, preview rendering, and export paths
-- A renderer CLI with `nebula validate`, `nebula preview`, `nebula diff`, `nebula git`, and `nebula render`
-- A PySide6 desktop authoring client that edits declarative project metadata
-
-Current desktop mastering controls include:
-
-- Colour adjustments for Blue, Red, Green, Cyan, and Yellow
-- Tonal adjustments for Brightness, Saturation, Black Point, Shadows, and five-band Levels
-- Colour smoothing
-- Semantic targets for Combined Image, Nebula, and Stars
-- Polygon region scoping
-- Image-driven colour-point sampling and adjustment creation
-- Screen and print export using the shared renderer
-- Packaged desktop application paths for macOS and Windows with a Nebula Master app icon
-
-The desktop preview can also show star and nebula diagnostic overlays so the user can see the current semantic split before applying adjustments.
-
-## Desktop Overview
-
-The current desktop app is a working authoring environment for real projects. Adjustments are ordered, target-aware, and non-destructive.
+The current desktop app is a working authoring environment for real projects. Adjustments are ordered, target-aware and non-destructive.
 
 ![Nebula Master desktop preview](docs/images/readme/desktop-main.png)
 
@@ -298,7 +381,7 @@ Print export currently supports:
 
 ![Screen export dialog](docs/images/readme/export-screen-dialog.png)
 
-## Local Packaging
+## Development and local packaging
 
 The desktop application now has explicit packaging paths for both macOS and Windows.
 
@@ -351,14 +434,7 @@ The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/neb
 - packages native desktop artifacts for the current platform
 - emits a portable Windows `.zip` plus an installer `.exe` when Inno Setup is installed
 
-## CI And Releases
-
-If you just want the current build without learning GitHub release mechanics, use these links:
-
-- Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
-- All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
-- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
-- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+## Development release automation
 
 The repository includes three GitHub Actions workflows:
 
