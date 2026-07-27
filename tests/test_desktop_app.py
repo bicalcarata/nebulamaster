@@ -7,7 +7,8 @@ from typing import Any, cast
 
 import numpy as np
 import yaml
-from image_io import inspect_image
+from engine import semantic_target_influence
+from image_io import CanonicalImage, inspect_image
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
     MainWindow,
@@ -314,8 +315,10 @@ def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
     assert window.colour_title_label.text() == "Red Point"
     assert window.pick_button.text() == "Pick Red Point"
     assert window.primary_input.suffix() == "%"
-    assert window.primary_input.minimum() == 0.0
+    assert window.primary_input.minimum() == -100.0
     assert window.primary_input.maximum() == 100.0
+    assert window.primary_slider.minimum() == -100
+    assert window.primary_slider.maximum() == 100
 
 
 def test_adjustment_list_labels_use_target_and_omit_duplicate_type_text(
@@ -342,7 +345,7 @@ def test_adjustment_list_labels_use_target_and_omit_duplicate_type_text(
     assert all("Cyan • Cyan" not in label for label in labels)
 
 
-def test_brightness_control_uses_exposure_style_mapping(
+def test_brightness_control_uses_linear_multiplier_mapping(
     qtbot: Any,
     tmp_path: Path,
 ) -> None:
@@ -365,14 +368,14 @@ def test_brightness_control_uses_exposure_style_mapping(
     summary = window.view_model.selected_adjustment_summary()
     assert summary is not None
     assert summary.transform_type == "brightness"
-    assert abs(_brightness_amount_to_ui(summary.primary_value or 0.0) - 8.0) <= 1.0
+    assert abs(_brightness_amount_to_ui(summary.primary_value or 0.0) - 12.0) <= 1.0
 
     window._on_primary_value_changed(100.0)
 
     updated = window.view_model.selected_adjustment_summary()
     assert updated is not None
     assert updated.primary_value is not None
-    assert updated.primary_value >= 3.99
+    assert updated.primary_value >= 1.99
 
 
 def test_adjustment_editor_shows_semantic_target_selector(
@@ -385,10 +388,11 @@ def test_adjustment_editor_shows_semantic_target_selector(
     window.show()
     qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
 
-    assert window.target_selector.count() == 3
+    assert window.target_selector.count() == 4
     assert window.target_selector.itemText(0) == "Combined Image"
     assert window.target_selector.itemText(1) == "Nebula"
     assert window.target_selector.itemText(2) == "Stars"
+    assert window.target_selector.itemText(3) == "Dark Dust"
 
 
 def test_semantic_overlay_mode_exposes_star_mask_from_current_image(tmp_path: Path) -> None:
@@ -416,6 +420,19 @@ def test_semantic_overlay_mode_exposes_star_mask_from_current_image(tmp_path: Pa
     assert nebula_overlay is not None
     assert nebula_overlay.mode == "nebula"
     assert nebula_overlay.mask.shape == overlay.mask.shape
+
+    view_model.set_semantic_overlay_mode("dark_dust")
+    dark_dust_overlay = view_model.current_semantic_overlay()
+    display_image = view_model.current_display_image()
+    assert dark_dust_overlay is not None
+    assert display_image is not None
+    assert dark_dust_overlay.mode == "dark_dust"
+    expected_mask = semantic_target_influence(
+        display_image.data,
+        "dark_dust",
+        view_model.dark_dust_settings(),
+    )
+    assert np.allclose(dark_dust_overlay.mask, expected_mask)
 
 
 def test_semantic_overlay_selector_updates_preview_overlay(
@@ -446,6 +463,9 @@ def test_semantic_overlay_selector_updates_preview_overlay(
     window.semantic_overlay_selector.setCurrentIndex(off_index)
     qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is None, timeout=5000)
 
+    dark_dust_index = window.semantic_overlay_selector.findData("dark_dust")
+    assert dark_dust_index >= 0
+
 
 def test_semantic_overlay_is_a_transparent_tint_not_a_replacement_image() -> None:
     mask = np.array([[0.0, 0.5], [1.0, 0.25]], dtype=np.float32)
@@ -456,7 +476,41 @@ def test_semantic_overlay_is_a_transparent_tint_not_a_replacement_image() -> Non
     assert tuple(int(channel) for channel in rgba[0, 0, :3]) == (0, 0, 0)
     assert 0 < int(rgba[0, 1, 3]) < 255
     assert 0 < int(rgba[1, 0, 3]) < 255
-    assert tuple(int(channel) for channel in rgba[1, 0, :3]) == (163, 230, 255)
+
+
+def test_dark_dust_settings_are_saved_and_loaded(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.dark_dust_enabled_checkbox.setChecked(True)
+    window.dark_dust_sensitivity_input.setValue(0.71)
+    window.dark_dust_structure_size_input.setValue(0.13)
+    window.dark_dust_background_protection_input.setValue(0.24)
+    window.dark_dust_softness_input.setValue(0.29)
+    window.view_model.save_changes()
+
+    payload = read_yaml_mapping(project_dir / "project.yaml")
+    assert payload["dark_dust"] == {
+        "enabled": True,
+        "sensitivity": 0.71,
+        "structure_size": 0.13,
+        "background_protection": 0.24,
+        "softness": 0.29,
+    }
+
+    reopened = ProjectEditorViewModel()
+    assert reopened.open_project(project_dir) is True
+    settings = reopened.dark_dust_settings()
+    assert settings.sensitivity == 0.71
+    assert settings.structure_size == 0.13
+    assert settings.background_protection == 0.24
+    assert settings.softness == 0.29
 
 
 def test_nebula_overlay_fill_alpha_stays_subtle_inside_large_selected_area() -> None:
@@ -860,6 +914,44 @@ def test_secondary_slider_defers_render_until_release(
     assert render_requests == [False]
 
 
+def test_primary_slider_defers_render_until_release(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    recorded_primary: list[tuple[float, bool]] = []
+    render_requests: list[bool] = []
+
+    def record_primary(value: float, *, render: bool = True) -> None:
+        recorded_primary.append((value, render))
+
+    def record_render(*, immediate: bool = False) -> None:
+        render_requests.append(immediate)
+
+    monkeypatch.setattr(
+        window.view_model,
+        "set_selected_adjustment_primary_value",
+        record_primary,
+    )
+    monkeypatch.setattr(window.view_model, "request_preview_render", record_render)
+
+    window._on_adjustment_slider_pressed()
+    assert window.view_model.is_adjustment_interacting is True
+
+    window._on_primary_slider_value_changed(60)
+    assert recorded_primary[-1] == (1.6, False)
+    assert render_requests == []
+
+    window._on_adjustment_slider_released()
+    assert window.view_model.is_adjustment_interacting is False
+    assert render_requests == [False]
+
+
 def test_numeric_adjustment_render_is_debounced(
     monkeypatch: Any,
     qtbot: Any,
@@ -1166,7 +1258,7 @@ def test_window_open_project_uses_async_preview_render(
     assert calls == [True]
 
 
-def test_colour_adjustment_amount_does_not_cross_below_neutral(tmp_path: Path) -> None:
+def test_colour_adjustment_amount_can_reduce_below_neutral(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
@@ -1179,7 +1271,7 @@ def test_colour_adjustment_amount_does_not_cross_below_neutral(tmp_path: Path) -
     red_rule = view_model._find_rule(working_documents.bundle, "red")
     assert red_rule is not None
     assert isinstance(red_rule.transform, ColourAmountTransform)
-    assert red_rule.transform.amount == 1.0
+    assert red_rule.transform.amount == 0.4
 
 
 def test_unsupported_rules_survive_save_and_source_bytes_remain_unchanged(tmp_path: Path) -> None:
@@ -1293,7 +1385,7 @@ def test_add_remove_and_duplicate_adjustments_leave_others_active(tmp_path: Path
     assert any(rule_id.startswith(new_rule_id) for rule_id in remaining_ids)
 
 
-def test_new_blue_and_red_adjustments_use_matching_default_colour_points(tmp_path: Path) -> None:
+def test_new_blue_and_red_adjustments_create_image_derived_colour_points(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
@@ -1301,17 +1393,23 @@ def test_new_blue_and_red_adjustments_use_matching_default_colour_points(tmp_pat
     view_model.create_adjustment("blue")
     blue_rule = view_model._selected_rule_model()
     assert blue_rule is not None
-    assert blue_rule.match.colour_point == "nebula-blue"
+    assert blue_rule.match.colour_point is not None
+    assert blue_rule.match.colour_point != "nebula-blue"
     assert blue_rule.target == "combined"
+    assert isinstance(blue_rule.transform, ColourAmountTransform)
+    assert blue_rule.transform.amount == 1.0
 
     view_model.create_adjustment("red")
     red_rule = view_model._selected_rule_model()
     assert red_rule is not None
-    assert red_rule.match.colour_point == "nebula-red"
+    assert red_rule.match.colour_point is not None
+    assert red_rule.match.colour_point != "nebula-red"
     assert red_rule.target == "combined"
+    assert isinstance(red_rule.transform, ColourAmountTransform)
+    assert red_rule.transform.amount == 1.0
 
 
-def test_new_green_cyan_and_yellow_adjustments_use_matching_defaults(tmp_path: Path) -> None:
+def test_new_green_cyan_and_yellow_adjustments_create_image_derived_points(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
@@ -1319,23 +1417,63 @@ def test_new_green_cyan_and_yellow_adjustments_use_matching_defaults(tmp_path: P
     view_model.create_adjustment("green")
     green_rule = view_model._selected_rule_model()
     assert green_rule is not None
-    assert green_rule.match.colour_point == "nebula-green"
+    assert green_rule.match.colour_point is not None
+    assert green_rule.match.colour_point != "nebula-green"
     assert isinstance(green_rule.transform, ColourAmountTransform)
     assert green_rule.transform.channel == "green"
+    assert green_rule.transform.amount == 1.0
 
     view_model.create_adjustment("cyan")
     cyan_rule = view_model._selected_rule_model()
     assert cyan_rule is not None
-    assert cyan_rule.match.colour_point == "nebula-cyan"
+    assert cyan_rule.match.colour_point is not None
+    assert cyan_rule.match.colour_point != "nebula-cyan"
     assert isinstance(cyan_rule.transform, ShiftColourPointTransform)
     assert cyan_rule.transform.target_colour_point == "nebula-cyan"
+    assert cyan_rule.transform.amount == 0.0
 
     view_model.create_adjustment("yellow")
     yellow_rule = view_model._selected_rule_model()
     assert yellow_rule is not None
-    assert yellow_rule.match.colour_point == "nebula-yellow"
+    assert yellow_rule.match.colour_point is not None
+    assert yellow_rule.match.colour_point != "nebula-yellow"
     assert isinstance(yellow_rule.transform, ShiftColourPointTransform)
     assert yellow_rule.transform.target_colour_point == "nebula-yellow"
+    assert yellow_rule.transform.amount == 0.0
+
+
+def test_new_colour_adjustment_uses_current_image_average_for_family(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    view_model._source_image = CanonicalImage(
+        data=np.asarray(
+            [
+                [[0.78, 0.18, 0.16], [0.72, 0.15, 0.14]],
+                [[0.05, 0.05, 0.40], [0.0, 0.0, 0.0]],
+            ],
+            dtype=np.float32,
+        ),
+        width=2,
+        height=2,
+    )
+    view_model._show_source = True
+
+    view_model.create_adjustment("red")
+    rule = view_model._selected_rule_model()
+    working_documents = view_model._working_documents
+
+    assert rule is not None
+    assert working_documents is not None
+    assert rule.match.colour_point is not None
+    assert isinstance(rule.transform, ColourAmountTransform)
+    assert rule.transform.amount == 1.0
+
+    colour_point = view_model._find_colour_point(working_documents.bundle, rule.match.colour_point)
+    assert colour_point is not None
+    assert abs(colour_point.value.channels[0] - 0.75) <= 0.08
+    assert abs(colour_point.value.channels[1] - 0.16) <= 0.06
+    assert abs(colour_point.value.channels[2] - 0.15) <= 0.06
 
 
 def test_new_black_point_adjustment_uses_dark_range_defaults(tmp_path: Path) -> None:

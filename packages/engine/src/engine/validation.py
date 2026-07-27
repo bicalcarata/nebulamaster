@@ -30,7 +30,7 @@ from project_model import (
 )
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-BUILTIN_SEMANTIC_TARGET_IDS = {"combined", "nebula", "stars"}
+BUILTIN_SEMANTIC_TARGET_IDS = {"combined", "nebula", "stars", "dark_dust"}
 
 EXIT_VALIDATION_SUCCESS = 0
 EXIT_VALIDATION_ERROR = 1

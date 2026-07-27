@@ -117,7 +117,11 @@ def _selection_weights(
         selection_image.shape[1],
         selection_image.shape[0],
     )
-    target_weights = semantic_target_influence(selection_image, rule.target)
+    target_weights = semantic_target_influence(
+        selection_image,
+        rule.target,
+        bundle.project.dark_dust,
+    )
     combined = (
         colour_weights
         * brightness_weights

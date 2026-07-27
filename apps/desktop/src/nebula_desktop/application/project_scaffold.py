@@ -118,6 +118,11 @@ def scaffold_project_from_image(
                     name="Stars",
                     description="Compact stellar sources",
                 ),
+                SemanticChannel(
+                    id="dark-dust",
+                    name="Dark Dust",
+                    description="Broad dark structures relative to local surroundings",
+                ),
             ],
             palettes=[FileReference(id="default-nebula", path=palette_relative_path)],
             regions=[],

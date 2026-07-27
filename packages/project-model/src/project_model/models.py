@@ -28,6 +28,7 @@ Identifier = Annotated[
 DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 SelectionSource = Literal["original", "current"]
 ColourChannel = Literal["red", "green", "blue"]
+SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
@@ -152,6 +153,14 @@ class SemanticChannel(StrictModel):
     description: str | None = None
 
 
+class DarkDustSettings(StrictModel):
+    enabled: bool = True
+    sensitivity: float = Field(default=0.58, ge=0.0, le=1.0)
+    structure_size: float = Field(default=0.09, gt=0.0, le=1.0)
+    background_protection: float = Field(default=0.30, ge=0.0, le=1.0)
+    softness: float = Field(default=0.22, ge=0.0, le=1.0)
+
+
 class FileReference(StrictModel):
     id: Identifier
     path: Path
@@ -195,14 +204,14 @@ class RuleMatch(StrictModel):
 class ColourAmountTransform(StrictModel):
     type: Literal["colour_amount"]
     channel: ColourChannel
-    amount: float = Field(ge=0.0, le=2.0)
+    amount: float = Field(ge=0.0, le=4.0)
     preserve_luminance: bool = True
 
 
 class ShiftColourPointTransform(StrictModel):
     type: Literal["shift_colour_point"]
     target_colour_point: Identifier
-    amount: float = Field(ge=0.0, le=1.0)
+    amount: float = Field(ge=-1.0, le=1.0)
     preserve_luminance: bool = True
 
 
@@ -213,7 +222,7 @@ class BrightnessTransform(StrictModel):
 
 class SaturationTransform(StrictModel):
     type: Literal["saturation"]
-    amount: float = Field(ge=0.0, le=2.0)
+    amount: float = Field(ge=0.0, le=4.0)
 
 
 class LevelsTransform(StrictModel):
@@ -253,7 +262,7 @@ class DeclarativeRule(StrictModel):
     name: DisplayName | None = None
     enabled: bool = True
     selection_source: SelectionSource = "current"
-    target: Identifier
+    target: SemanticTarget
     match: RuleMatch = Field(default_factory=RuleMatch)
     regions: list[Identifier] = Field(default_factory=list)
     transform: TransformationDeclaration
@@ -510,6 +519,7 @@ class ProjectFile(StrictModel):
     regions: list[FileReference] = Field(default_factory=list)
     render_profiles: list[FileReference] = Field(default_factory=list)
     plugins: PluginLockReference
+    dark_dust: DarkDustSettings = Field(default_factory=DarkDustSettings)
     crop: CropDeclaration = Field(default_factory=CropDeclaration)
     source_mix: SourceMixDeclaration = Field(default_factory=WeightedAverageSourceMix)
     rules: list[DeclarativeRule] = Field(default_factory=list)

@@ -8,6 +8,7 @@ import numpy as np
 import yaml
 from engine import EXIT_VALIDATION_SUCCESS
 from engine.preview import render_preview, render_preview_image
+from engine.semantic import dark_dust_influence, star_influence
 from engine.validation import load_valid_project_bundle
 from image_io import load_canonical_image, resize_to_max_edge
 from PIL import Image
@@ -657,3 +658,91 @@ def test_nebula_target_only_affects_diffuse_nebula_pixels(tmp_path: Path) -> Non
     assert nebula_pixel_shift > 0.05
     assert star_pixel_shift < 0.02
     assert background_shift > 0.02
+
+
+def test_flat_black_image_produces_little_or_no_dark_dust_mask() -> None:
+    image = np.zeros((32, 32, 3), dtype=np.float32)
+    mask = dark_dust_influence(image)
+
+    assert float(mask.max()) < 0.01
+
+
+def test_uniform_grey_image_produces_little_or_no_dark_dust_mask() -> None:
+    image = np.full((32, 32, 3), 0.35, dtype=np.float32)
+    mask = dark_dust_influence(image)
+
+    assert float(mask.max()) < 0.02
+
+
+def test_broad_dark_shape_within_brighter_field_produces_dark_dust_mask() -> None:
+    image = np.full((64, 64, 3), 0.55, dtype=np.float32)
+    image[18:46, 18:46, :] = 0.18
+    mask = dark_dust_influence(image)
+
+    assert float(mask[32, 32]) > 0.4
+    assert float(mask[6, 6]) < 0.05
+
+
+def test_isolated_black_pixels_are_suppressed_from_dark_dust_mask() -> None:
+    image = np.full((64, 64, 3), 0.55, dtype=np.float32)
+    image[32, 32, :] = 0.0
+    mask = dark_dust_influence(image)
+
+    assert float(mask[32, 32]) < 0.2
+
+
+def test_stars_are_excluded_from_dark_dust_mask() -> None:
+    image = np.full((64, 64, 3), 0.55, dtype=np.float32)
+    image[18:46, 18:46, :] = 0.20
+    image[31:34, 31:34, :] = 1.0
+
+    mask = dark_dust_influence(image)
+    stars = star_influence(image)
+
+    assert float(stars[32, 32]) > 0.5
+    assert float(mask[32, 32]) < 0.1
+
+
+def test_dark_dust_is_a_subset_of_non_star_content() -> None:
+    image = np.full((64, 64, 3), 0.55, dtype=np.float32)
+    image[18:46, 18:46, :] = 0.20
+    image[8:11, 8:11, :] = 1.0
+
+    mask = dark_dust_influence(image)
+    non_star = 1.0 - star_influence(image)
+
+    assert np.all(mask <= non_star + 1e-5)
+
+
+def test_dark_dust_target_only_affects_broad_relative_dark_regions(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-dust-project"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    dark_dust_source = np.full((48, 64, 3), 160, dtype=np.uint8)
+    dark_dust_source[12:36, 20:48, :] = 70
+    dark_dust_source[7:10, 9:12, :] = 255
+    Image.fromarray(dark_dust_source, mode="RGB").save(
+        project_dir / "sources/source.png",
+        format="PNG",
+    )
+    payload = _base_project_payload(
+        [_rule_brightness(rule_id="lift-dark-dust", name="Lift Dark Dust", target="dark_dust")]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    preview_path = tmp_path / "dark-dust-preview.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+
+    dark_dust_shift = float(preview[24, 32, 0] - source[24, 32, 0])
+    star_shift = float(preview[8, 10, 0] - source[8, 10, 0])
+    background_shift = float(preview[4, 4, 0] - source[4, 4, 0])
+
+    assert dark_dust_shift > 0.02
+    assert abs(star_shift) < 0.02
+    assert abs(background_shift) < 0.02

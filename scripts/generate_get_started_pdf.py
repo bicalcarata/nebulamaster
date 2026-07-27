@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# mypy: disable-error-code=import-untyped
 from pathlib import Path
 
 from reportlab.lib import colors

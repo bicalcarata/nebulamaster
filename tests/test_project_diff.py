@@ -92,6 +92,41 @@ def test_selection_source_source_replacement_render_profile_and_plugin_lock_chan
     assert "plugin_lock.changed" in modified_codes
 
 
+def test_rule_target_change_is_reported_in_plain_language(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    project_file = project_b / "project.yaml"
+    payload = _read_yaml(project_file)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules[0]["target"] = "dark_dust"
+    _write_yaml(project_file, payload)
+
+    result = diff_projects(project_a, project_b)
+
+    assert [change.code for change in result.modified_items] == ["rule.target_changed"]
+    assert "Dark Dust" in result.modified_items[0].human_summary
+
+
+def test_project_dark_dust_setting_change_is_reported(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    project_file = project_b / "project.yaml"
+    payload = _read_yaml(project_file)
+    payload["dark_dust"] = {
+        "enabled": True,
+        "sensitivity": 0.72,
+        "structure_size": 0.15,
+        "background_protection": 0.18,
+        "softness": 0.30,
+    }
+    _write_yaml(project_file, payload)
+
+    result = diff_projects(project_a, project_b)
+
+    assert [change.code for change in result.modified_items] == ["project.dark_dust_changed"]
+
+
 def test_feather_only_region_change_is_distinguished(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")

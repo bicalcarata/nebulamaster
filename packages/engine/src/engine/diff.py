@@ -230,6 +230,10 @@ def _format_range_summary(
     return f"{name} selection bounds changed."
 
 
+def _target_display_name(target: str) -> str:
+    return target.replace("_", " ").title()
+
+
 def _added_removed_changes(
     entity_type: str,
     code_added: str,
@@ -353,6 +357,23 @@ def _compare_project_metadata(
                     f"to {bundle_b.project.schema_version}."
                 ),
                 technical_path="schema_version",
+            )
+        )
+
+    dark_dust_a = bundle_a.project.dark_dust.model_dump(mode="json")
+    dark_dust_b = bundle_b.project.dark_dust.model_dump(mode="json")
+    if dark_dust_a != dark_dust_b:
+        changes.append(
+            _change(
+                "project.dark_dust_changed",
+                "project",
+                entity_id=meta_a.id,
+                entity_name=meta_b.name,
+                old_value=dark_dust_a,
+                new_value=dark_dust_b,
+                significance=["visual", "structural"],
+                human_summary="Dark Dust detection settings changed.",
+                technical_path="dark_dust",
             )
         )
 
@@ -650,6 +671,24 @@ def _compare_rules(
                         f"instead of the {rule_a.selection_source} image."
                     ),
                     technical_path=f"rules.{rule_id}.selection_source",
+                )
+            )
+
+        if rule_a.target != rule_b.target:
+            modified.append(
+                _change(
+                    "rule.target_changed",
+                    "rule",
+                    entity_id=rule_id,
+                    entity_name=rule_b.name,
+                    old_value=rule_a.target,
+                    new_value=rule_b.target,
+                    significance=["visual", "structural"],
+                    human_summary=(
+                        f"{rule_b.name} now affects {_target_display_name(rule_b.target)} "
+                        f"instead of {_target_display_name(rule_a.target)}."
+                    ),
+                    technical_path=f"rules.{rule_id}.target",
                 )
             )
 

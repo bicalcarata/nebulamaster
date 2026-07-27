@@ -5,8 +5,9 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
+import numpy as np
 from engine import (
     PreviewImageResult,
     RenderResult,
@@ -28,6 +29,7 @@ from project_model import (
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    DarkDustSettings,
     DeclarativeRule,
     Feather,
     FileReference,
@@ -44,6 +46,7 @@ from project_model import (
     RuleReorderChange,
     SaturationTransform,
     ScreenRenderProfile,
+    SemanticTarget,
     ShiftColourPointTransform,
     SourceImage,
 )
@@ -66,7 +69,7 @@ AdjustmentKind = Literal[
     "smoothness",
 ]
 SamplingPurpose = Literal["colour_point", "create_adjustment"]
-SemanticOverlaySelection = Literal["off", "stars", "nebula"]
+SemanticOverlaySelection = Literal["off", "stars", "nebula", "dark_dust"]
 
 
 @dataclass(frozen=True)
@@ -244,6 +247,39 @@ def _colour_family_hue(family: str) -> float | None:
     }.get(family)
 
 
+def _circular_hue_distance(hue: np.ndarray, target: float) -> np.ndarray:
+    raw = np.abs(hue - target)
+    return np.minimum(raw, 1.0 - raw)
+
+
+def _rgb_hsv_planes(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    red = data[..., 0]
+    green = data[..., 1]
+    blue = data[..., 2]
+
+    maximum = np.max(data, axis=-1)
+    minimum = np.min(data, axis=-1)
+    delta = maximum - minimum
+
+    hue = np.zeros_like(maximum, dtype=np.float32)
+    mask = delta > 1e-6
+
+    red_max = mask & (maximum == red)
+    green_max = mask & (maximum == green)
+    blue_max = mask & (maximum == blue)
+
+    hue[red_max] = np.mod((green[red_max] - blue[red_max]) / delta[red_max], 6.0)
+    hue[green_max] = ((blue[green_max] - red[green_max]) / delta[green_max]) + 2.0
+    hue[blue_max] = ((red[blue_max] - green[blue_max]) / delta[blue_max]) + 4.0
+    hue = np.mod(hue / 6.0, 1.0).astype(np.float32, copy=False)
+
+    saturation = np.zeros_like(maximum, dtype=np.float32)
+    non_zero = maximum > 1e-6
+    saturation[non_zero] = delta[non_zero] / maximum[non_zero]
+    value = maximum.astype(np.float32, copy=False)
+    return hue, saturation, value
+
+
 def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
     return {
         "blue": ("nebula blue", "blue"),
@@ -281,6 +317,7 @@ def _target_options() -> tuple[tuple[str, str], ...]:
         ("combined", "Combined Image"),
         ("nebula", "Nebula"),
         ("stars", "Stars"),
+        ("dark_dust", "Dark Dust"),
     )
 
 
@@ -543,10 +580,20 @@ class ProjectEditorViewModel(QObject):
         overlay_image = self._semantic_overlay_source_image()
         if display_image is None or overlay_image is None:
             return None
-        mask = semantic_target_influence(overlay_image.data, self._semantic_overlay_mode)
+        settings = (
+            self._working_documents.bundle.project.dark_dust
+            if self._working_documents
+            else None
+        )
+        mask = semantic_target_influence(
+            overlay_image.data,
+            self._semantic_overlay_mode,
+            settings,
+        )
         label = {
             "stars": "Star Split Overlay",
             "nebula": "Nebula Split Overlay",
+            "dark_dust": "Dark Dust Overlay",
         }[self._semantic_overlay_mode]
         return SemanticOverlay(mode=self._semantic_overlay_mode, label=label, mask=mask)
 
@@ -758,7 +805,7 @@ class ProjectEditorViewModel(QObject):
         self.previewChanged.emit()
 
     def set_semantic_overlay_mode(self, mode: SemanticOverlaySelection) -> None:
-        if mode not in {"off", "stars", "nebula"}:
+        if mode not in {"off", "stars", "nebula", "dark_dust"}:
             return
         self._semantic_overlay_mode = mode
         self.previewChanged.emit()
@@ -879,16 +926,23 @@ class ProjectEditorViewModel(QObject):
     def create_adjustment(self, kind: AdjustmentKind) -> None:
         if self._working_documents is None:
             return
+        colour_point_id = self._default_colour_point_id(kind)
+        if _default_colour_point_tokens(kind):
+            colour_point_id = self._create_image_average_colour_point(kind) or colour_point_id
         rule = self._build_adjustment_rule(
             kind=kind,
             rule_name=self._default_adjustment_name(kind),
-            colour_point_id=self._default_colour_point_id(kind),
+            colour_point_id=colour_point_id,
         )
         insert_index = self._selected_adjustment_index()
         if insert_index is None:
             self._working_documents.bundle.project.rules.append(rule)
         else:
             self._working_documents.bundle.project.rules.insert(insert_index + 1, rule)
+        if colour_point_id is not None and _default_colour_point_tokens(kind):
+            colour_point = self._find_colour_point(self._working_documents.bundle, colour_point_id)
+            if colour_point is not None:
+                self._configure_colour_selection_from_sample(rule, colour_point.value.channels)
         self._selected_adjustment_id = rule.id
         self._selection_kind = "adjustment"
         self.selectionChanged.emit("adjustment")
@@ -995,15 +1049,15 @@ class ProjectEditorViewModel(QObject):
             return
         transform = rule.transform
         if isinstance(transform, ColourAmountTransform):
-            transform.amount = max(1.0, min(2.0, value))
+            transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, ShiftColourPointTransform):
-            transform.amount = max(0.0, min(1.0, value))
+            transform.amount = max(-1.0, min(1.0, value))
         elif isinstance(transform, BrightnessTransform):
             transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, LevelsTransform):
             return
         elif isinstance(transform, SaturationTransform):
-            transform.amount = max(0.0, min(2.0, value))
+            transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, ColourSmoothingTransform):
             transform.strength = max(0.0, min(1.0, value))
         else:
@@ -1072,9 +1126,51 @@ class ProjectEditorViewModel(QObject):
         rule = self._selected_rule_model()
         if rule is None:
             return
-        if target_id not in {option_id for option_id, _label in _target_options()}:
+        valid_target_ids = {option_id for option_id, _label in _target_options()}
+        if target_id not in valid_target_ids:
             return
-        rule.target = target_id
+        rule.target = cast(SemanticTarget, target_id)
+        self._after_metadata_change(render=True)
+
+    def dark_dust_settings(self) -> DarkDustSettings:
+        if self._working_documents is None:
+            return DarkDustSettings()
+        return self._working_documents.bundle.project.dark_dust
+
+    def set_dark_dust_enabled(self, enabled: bool) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.enabled = enabled
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_sensitivity(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.sensitivity = max(0.0, min(1.0, value))
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_structure_size(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.structure_size = max(
+            0.01,
+            min(1.0, value),
+        )
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_background_protection(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.background_protection = max(
+            0.0,
+            min(1.0, value),
+        )
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_softness(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.softness = max(0.0, min(1.0, value))
         self._after_metadata_change(render=True)
 
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:
@@ -1245,6 +1341,8 @@ class ProjectEditorViewModel(QObject):
             self._revert_region(change.entity_id)
         elif change.entity_type == "colour_point":
             self._revert_colour_point(change.entity_id)
+        elif change.entity_type == "project":
+            self._revert_project_settings()
 
     def revert_unsaved_changes(self) -> None:
         if self._saved_documents is None:
@@ -1479,7 +1577,7 @@ class ProjectEditorViewModel(QObject):
                 return region.name
         return "Multiple regions"
 
-    def _default_target(self) -> str:
+    def _default_target(self) -> SemanticTarget:
         return "combined"
 
     def _normalized_colour_sample(
@@ -1600,7 +1698,7 @@ class ProjectEditorViewModel(QObject):
             | ColourSmoothingTransform
         )
         if kind == "blue":
-            transform = ColourAmountTransform(type="colour_amount", channel="blue", amount=1.2)
+            transform = ColourAmountTransform(type="colour_amount", channel="blue", amount=1.0)
             match = RuleMatch(
                 colour_point=colour_point_id,
                 colour_range=0.10,
@@ -1608,7 +1706,7 @@ class ProjectEditorViewModel(QObject):
                 softness=0.35,
             )
         elif kind == "red":
-            transform = ColourAmountTransform(type="colour_amount", channel="red", amount=1.2)
+            transform = ColourAmountTransform(type="colour_amount", channel="red", amount=1.0)
             match = RuleMatch(
                 colour_point=colour_point_id,
                 colour_range=0.10,
@@ -1616,7 +1714,7 @@ class ProjectEditorViewModel(QObject):
                 softness=0.35,
             )
         elif kind == "green":
-            transform = ColourAmountTransform(type="colour_amount", channel="green", amount=1.2)
+            transform = ColourAmountTransform(type="colour_amount", channel="green", amount=1.0)
             match = RuleMatch(
                 colour_point=colour_point_id,
                 colour_range=0.10,
@@ -1627,7 +1725,7 @@ class ProjectEditorViewModel(QObject):
             transform = ShiftColourPointTransform(
                 type="shift_colour_point",
                 target_colour_point=_shift_target_colour_point_id(kind) or "nebula-cyan",
-                amount=0.35,
+                amount=0.0,
                 preserve_luminance=True,
             )
             match = RuleMatch(
@@ -1640,7 +1738,7 @@ class ProjectEditorViewModel(QObject):
             transform = ShiftColourPointTransform(
                 type="shift_colour_point",
                 target_colour_point=_shift_target_colour_point_id(kind) or "nebula-yellow",
-                amount=0.35,
+                amount=0.0,
                 preserve_luminance=True,
             )
             match = RuleMatch(
@@ -1715,11 +1813,6 @@ class ProjectEditorViewModel(QObject):
         kind: AdjustmentKind,
         rgb: tuple[float, float, float],
     ) -> str | None:
-        if self._working_documents is None:
-            return None
-        palette = next(iter(self._working_documents.bundle.palettes.values()), None)
-        if palette is None:
-            return None
         point_name = self._unique_colour_point_name(
             {
                 "blue": "Selected Blue Point",
@@ -1732,6 +1825,33 @@ class ProjectEditorViewModel(QObject):
                 "smoothness": "Selected Smoothing Point",
             }[kind]
         )
+        return self._append_working_colour_point(point_name, rgb)
+
+    def _create_image_average_colour_point(self, kind: AdjustmentKind) -> str | None:
+        average_rgb = self._image_average_colour_for_kind(kind)
+        if average_rgb is None:
+            return None
+        point_name = self._unique_colour_point_name(
+            {
+                "blue": "Image Blue Point",
+                "red": "Image Red Point",
+                "green": "Image Green Point",
+                "cyan": "Image Cyan Point",
+                "yellow": "Image Yellow Point",
+            }[kind]
+        )
+        return self._append_working_colour_point(point_name, average_rgb)
+
+    def _append_working_colour_point(
+        self,
+        point_name: str,
+        rgb: tuple[float, float, float],
+    ) -> str | None:
+        if self._working_documents is None:
+            return None
+        palette = next(iter(self._working_documents.bundle.palettes.values()), None)
+        if palette is None:
+            return None
         point_id = self._unique_colour_point_id(point_name)
         palette.colour_points.append(
             ColourPoint(
@@ -1741,6 +1861,46 @@ class ProjectEditorViewModel(QObject):
             )
         )
         return point_id
+
+    def _image_average_colour_for_kind(
+        self,
+        kind: AdjustmentKind,
+    ) -> tuple[float, float, float] | None:
+        family_hue = _colour_family_hue(kind)
+        if family_hue is None:
+            return None
+        image = self.current_display_image() or self._source_image
+        if image is None:
+            return None
+
+        data = np.clip(image.data.astype(np.float32, copy=False), 0.0, 1.0)
+        if data.size == 0:
+            return None
+
+        hue, saturation, value = _rgb_hsv_planes(data)
+        distance = _circular_hue_distance(hue, family_hue)
+        hue_weight = np.clip(1.0 - (distance / 0.14), 0.0, 1.0)
+        saturation_weight = np.clip((saturation - 0.08) / 0.42, 0.0, 1.0)
+        value_weight = np.clip((value - 0.03) / 0.97, 0.0, 1.0)
+        weights = (hue_weight * saturation_weight * value_weight).astype(
+            np.float32,
+            copy=False,
+        )
+
+        total_weight = float(np.sum(weights))
+        if total_weight <= 1e-6:
+            default_colour_point_id = self._default_colour_point_id(kind)
+            if default_colour_point_id is None or self._working_documents is None:
+                return None
+            colour_point = self._find_colour_point(
+                self._working_documents.bundle,
+                default_colour_point_id,
+            )
+            return colour_point.value.channels if colour_point is not None else None
+
+        weighted_rgb = np.sum(data * weights[..., None], axis=(0, 1)) / total_weight
+        red, green, blue = weighted_rgb.astype(np.float32, copy=False)
+        return float(red), float(green), float(blue)
 
     def _unique_colour_point_id(self, base: str) -> str:
         if self._working_documents is None:
@@ -1929,6 +2089,14 @@ class ProjectEditorViewModel(QObject):
         working_point.value.channels = saved_point.value.channels
         if trigger_change:
             self._after_metadata_change(render=True)
+
+    def _revert_project_settings(self) -> None:
+        if self._saved_documents is None or self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust = (
+            self._saved_documents.bundle.project.dark_dust.model_copy(deep=True)
+        )
+        self._after_metadata_change(render=True)
 
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:

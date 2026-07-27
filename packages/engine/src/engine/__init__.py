@@ -14,7 +14,7 @@ from .render import (
     render_output,
 )
 from .selection import apply_weighted_channel_transform, brightness_weight, colour_weight
-from .semantic import semantic_target_influence, star_influence
+from .semantic import dark_dust_influence, semantic_target_influence, star_influence
 from .sources import (
     PreparedSourcesResult,
     SourceAlignmentReport,
@@ -63,6 +63,7 @@ __all__ = [
     "brightness_weight",
     "diff_projects",
     "diff_bundles",
+    "dark_dust_influence",
     "colour_weight",
     "clear_prepared_sources_cache",
     "execute_project_image",

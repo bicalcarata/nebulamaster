@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import cast
 
@@ -67,13 +66,28 @@ def _allow_horizontal_shrink(widget: QWidget) -> None:
     widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
 
+_MULTIPLIER_UI_MIN = -100.0
+_MULTIPLIER_UI_MAX = 100.0
+_SHIFT_UI_MIN = -100.0
+_SHIFT_UI_MAX = 100.0
+_SMOOTHING_UI_MIN = 0.0
+_SMOOTHING_UI_MAX = 100.0
+
+
 def _brightness_amount_to_ui(amount: float) -> float:
-    safe_amount = max(amount, 0.25)
-    return max(-100.0, min(100.0, math.log2(safe_amount) * 50.0))
+    return max(_MULTIPLIER_UI_MIN, min(_MULTIPLIER_UI_MAX, (amount - 1.0) * 100.0))
 
 
 def _brightness_ui_to_amount(value: float) -> float:
-    return float(2.0 ** (value / 50.0))
+    return max(0.0, 1.0 + (value / 100.0))
+
+
+def _primary_slider_bounds(transform_type: str, type_label: str) -> tuple[int, int]:
+    if transform_type == "shift_colour_point":
+        return int(_SHIFT_UI_MIN), int(_SHIFT_UI_MAX)
+    if type_label == "Smoothing":
+        return int(_SMOOTHING_UI_MIN), int(_SMOOTHING_UI_MAX)
+    return int(_MULTIPLIER_UI_MIN), int(_MULTIPLIER_UI_MAX)
 
 
 class MainWindow(QMainWindow):
@@ -250,6 +264,7 @@ class MainWindow(QMainWindow):
         self.semantic_overlay_selector.addItem("Overlay: Off", "off")
         self.semantic_overlay_selector.addItem("Overlay: Stars", "stars")
         self.semantic_overlay_selector.addItem("Overlay: Nebula", "nebula")
+        self.semantic_overlay_selector.addItem("Overlay: Dark Dust", "dark_dust")
         self.before_after_checkbox = QCheckBox("Before / After")
         self.hold_previous_button = QPushButton("Hold Previous")
         self.fit_button = QPushButton("Fit")
@@ -324,6 +339,9 @@ class MainWindow(QMainWindow):
         self.editor_stack.addWidget(self._build_region_editor())
         layout.addWidget(self.editor_stack, 1)
 
+        self.dark_dust_group = self._build_dark_dust_settings_panel()
+        layout.addWidget(self.dark_dust_group)
+
         note = QLabel(
             "YAML comments are not preserved yet when saving edited metadata."
         )
@@ -361,25 +379,42 @@ class MainWindow(QMainWindow):
 
         self.primary_label = QLabel("Amount")
         self.primary_label.setStyleSheet("font-weight: 600;")
+        self.primary_slider = QSlider(Qt.Orientation.Horizontal)
         self.primary_input = QDoubleSpinBox()
         self.primary_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
         self.primary_input.setKeyboardTracking(False)
+        primary_controls = QWidget(self)
+        primary_controls_layout = QHBoxLayout(primary_controls)
+        primary_controls_layout.setContentsMargins(0, 0, 0, 0)
+        primary_controls_layout.setSpacing(8)
+        primary_controls_layout.addWidget(self.primary_slider, 1)
+        primary_controls_layout.addWidget(self.primary_input)
+        self.primary_controls = primary_controls
 
         self.level_inputs_container = QWidget(self)
         levels_layout = QVBoxLayout(self.level_inputs_container)
         levels_layout.setContentsMargins(0, 0, 0, 0)
         levels_layout.setSpacing(8)
         self.level_labels: list[QLabel] = []
+        self.level_sliders: list[QSlider] = []
         self.level_inputs: list[QDoubleSpinBox] = []
         for level_name in ["Darkest", "Dark", "Mid", "Light", "Brightest"]:
             label = QLabel(level_name)
             label.setStyleSheet("font-weight: 600;")
+            slider = QSlider(Qt.Orientation.Horizontal)
             input_widget = QDoubleSpinBox()
             input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             input_widget.setKeyboardTracking(False)
+            row = QWidget(self.level_inputs_container)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(slider, 1)
+            row_layout.addWidget(input_widget)
             levels_layout.addWidget(label)
-            levels_layout.addWidget(input_widget)
+            levels_layout.addWidget(row)
             self.level_labels.append(label)
+            self.level_sliders.append(slider)
             self.level_inputs.append(input_widget)
 
         self.secondary_label = QLabel("Reach")
@@ -401,7 +436,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.colour_title_label)
         layout.addLayout(point_layout)
         layout.addWidget(self.primary_label)
-        layout.addWidget(self.primary_input)
+        layout.addWidget(self.primary_controls)
         layout.addWidget(self.level_inputs_container)
         layout.addWidget(self.secondary_label)
         layout.addWidget(self.secondary_slider)
@@ -409,6 +444,47 @@ class MainWindow(QMainWindow):
         layout.addWidget(scope_title)
         layout.addWidget(self.apply_everywhere_checkbox)
         layout.addWidget(self.region_scope_list, 1)
+        return panel
+
+    def _build_dark_dust_settings_panel(self) -> QWidget:
+        panel = QWidget(self)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        title = QLabel("Dark Dust")
+        title.setStyleSheet("font-weight: 600;")
+        helper = QLabel(
+            "Controls the global Dark Dust semantic mask used by the overlay and any "
+            "adjustment that targets Dark Dust."
+        )
+        helper.setWordWrap(True)
+        helper.setStyleSheet("color: #7b8794;")
+
+        self.dark_dust_enabled_checkbox = QCheckBox("Enabled")
+        self.dark_dust_sensitivity_input = QDoubleSpinBox()
+        self.dark_dust_structure_size_input = QDoubleSpinBox()
+        self.dark_dust_background_protection_input = QDoubleSpinBox()
+        self.dark_dust_softness_input = QDoubleSpinBox()
+
+        controls: list[tuple[str, QDoubleSpinBox]] = [
+            ("Sensitivity", self.dark_dust_sensitivity_input),
+            ("Structure Size", self.dark_dust_structure_size_input),
+            ("Background Protection", self.dark_dust_background_protection_input),
+            ("Softness", self.dark_dust_softness_input),
+        ]
+        for label, widget in controls:
+            caption = QLabel(label)
+            caption.setStyleSheet("font-weight: 600;")
+            widget.setDecimals(2)
+            widget.setRange(0.0, 1.0)
+            widget.setSingleStep(0.01)
+            layout.addWidget(caption)
+            layout.addWidget(widget)
+
+        layout.addWidget(title)
+        layout.addWidget(helper)
+        layout.addWidget(self.dark_dust_enabled_checkbox)
         return panel
 
     def _build_region_editor(self) -> QWidget:
@@ -532,9 +608,22 @@ class MainWindow(QMainWindow):
 
         self.adjustment_enabled_checkbox.toggled.connect(self.view_model.set_selected_adjustment_enabled)
         self.target_selector.currentIndexChanged.connect(self._on_target_changed)
+        self.primary_slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
+        self.primary_slider.sliderReleased.connect(self._on_adjustment_slider_released)
+        self.primary_slider.valueChanged.connect(self._on_primary_slider_value_changed)
         self.primary_input.valueChanged.connect(self._on_primary_value_changed)
         self.primary_input.editingFinished.connect(self._schedule_adjustment_render)
-        for index, input_widget in enumerate(self.level_inputs):
+        for index, (slider, input_widget) in enumerate(
+            zip(self.level_sliders, self.level_inputs, strict=False)
+        ):
+            slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
+            slider.sliderReleased.connect(self._on_adjustment_slider_released)
+            slider.valueChanged.connect(
+                lambda value, level_index=index: self._on_level_slider_value_changed(
+                    level_index,
+                    value,
+                )
+            )
             input_widget.valueChanged.connect(
                 lambda value, level_index=index: self._on_level_value_changed(level_index, value)
             )
@@ -550,6 +639,18 @@ class MainWindow(QMainWindow):
         self.region_softness_slider.valueChanged.connect(
             lambda value: self.view_model.set_selected_region_softness(value / 100.0)
         )
+
+        self.dark_dust_enabled_checkbox.toggled.connect(self.view_model.set_dark_dust_enabled)
+        self.dark_dust_sensitivity_input.valueChanged.connect(
+            self.view_model.set_dark_dust_sensitivity
+        )
+        self.dark_dust_structure_size_input.valueChanged.connect(
+            self.view_model.set_dark_dust_structure_size
+        )
+        self.dark_dust_background_protection_input.valueChanged.connect(
+            self.view_model.set_dark_dust_background_protection
+        )
+        self.dark_dust_softness_input.valueChanged.connect(self.view_model.set_dark_dust_softness)
 
         self.revert_change_button.clicked.connect(self._revert_selected_change)
         self.what_changed_button.clicked.connect(self._show_semantic_changes)
@@ -812,6 +913,7 @@ class MainWindow(QMainWindow):
         self.show_source_button.setChecked(False)
         with QSignalBlocker(self.semantic_overlay_selector):
             self.semantic_overlay_selector.setCurrentIndex(0)
+        self._refresh_dark_dust_settings()
 
     def _refresh_sources(self) -> None:
         self.sources_list.clear()
@@ -856,6 +958,7 @@ class MainWindow(QMainWindow):
         if selected_row >= 0:
             self.adjustments_list.setCurrentRow(selected_row)
         self._apply_adjustment_summary(self.view_model.selected_adjustment_summary())
+        self._refresh_dark_dust_settings()
 
     def _adjustment_list_label(self, prefix: str, summary: AdjustmentSummary) -> str:
         parts = [f"{prefix} {summary.name}", summary.target_label]
@@ -881,7 +984,21 @@ class MainWindow(QMainWindow):
         if selected_row >= 0:
             self.regions_list.setCurrentRow(selected_row)
         self._apply_region_summary(self.view_model.selected_region_summary())
+        self._refresh_dark_dust_settings()
         self._refresh_preview()
+
+    def _refresh_dark_dust_settings(self) -> None:
+        settings = self.view_model.dark_dust_settings()
+        with QSignalBlocker(self.dark_dust_enabled_checkbox):
+            self.dark_dust_enabled_checkbox.setChecked(settings.enabled)
+        for widget, value in [
+            (self.dark_dust_sensitivity_input, settings.sensitivity),
+            (self.dark_dust_structure_size_input, settings.structure_size),
+            (self.dark_dust_background_protection_input, settings.background_protection),
+            (self.dark_dust_softness_input, settings.softness),
+        ]:
+            with QSignalBlocker(widget):
+                widget.setValue(value)
 
     def _refresh_changes(self) -> None:
         changes = self.view_model.unsaved_changes()
@@ -908,6 +1025,8 @@ class MainWindow(QMainWindow):
             self.colour_swatch.setVisible(False)
             self.colour_point_label.setVisible(False)
             self.pick_button.setEnabled(False)
+            self.primary_label.setVisible(False)
+            self.primary_controls.setVisible(False)
             self.level_inputs_container.setVisible(False)
             return
 
@@ -925,6 +1044,7 @@ class MainWindow(QMainWindow):
                 ("combined", "Combined Image"),
                 ("nebula", "Nebula"),
                 ("stars", "Stars"),
+                ("dark_dust", "Dark Dust"),
             ]:
                 self.target_selector.addItem(label, target_id)
             current_index = self.target_selector.findData(summary.target_id)
@@ -950,7 +1070,9 @@ class MainWindow(QMainWindow):
         has_levels_controls = bool(summary.level_values)
         self.level_inputs_container.setVisible(has_levels_controls)
         self.primary_label.setVisible(not has_levels_controls and summary.primary_label is not None)
-        self.primary_input.setVisible(not has_levels_controls and summary.primary_value is not None)
+        self.primary_controls.setVisible(
+            not has_levels_controls and summary.primary_value is not None
+        )
         if (
             not has_levels_controls
             and summary.primary_label is not None
@@ -958,35 +1080,54 @@ class MainWindow(QMainWindow):
         ):
             self.primary_label.setText(summary.primary_label)
             if summary.transform_type == "colour_amount":
-                spin_value = max(0.0, min(100.0, (summary.primary_value - 1.0) * 100.0))
-                spin_range = (0.0, 100.0)
+                spin_value = max(
+                    _MULTIPLIER_UI_MIN,
+                    min(_MULTIPLIER_UI_MAX, (summary.primary_value - 1.0) * 100.0),
+                )
+                spin_range = (_MULTIPLIER_UI_MIN, _MULTIPLIER_UI_MAX)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
             elif summary.transform_type == "shift_colour_point":
-                spin_value = max(0.0, min(100.0, summary.primary_value * 100.0))
-                spin_range = (0.0, 100.0)
+                spin_value = max(
+                    _SHIFT_UI_MIN,
+                    min(_SHIFT_UI_MAX, summary.primary_value * 100.0),
+                )
+                spin_range = (_SHIFT_UI_MIN, _SHIFT_UI_MAX)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
             elif summary.type_label == "Smoothing":
-                spin_value = max(0.0, min(100.0, summary.primary_value * 100.0))
-                spin_range = (0.0, 100.0)
+                spin_value = max(
+                    _SMOOTHING_UI_MIN,
+                    min(_SMOOTHING_UI_MAX, summary.primary_value * 100.0),
+                )
+                spin_range = (_SMOOTHING_UI_MIN, _SMOOTHING_UI_MAX)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
             elif summary.transform_type == "brightness":
                 spin_value = _brightness_amount_to_ui(summary.primary_value)
-                spin_range = (-100.0, 100.0)
+                spin_range = (_MULTIPLIER_UI_MIN, _MULTIPLIER_UI_MAX)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
             else:
-                spin_value = max(-100.0, min(100.0, (summary.primary_value - 1.0) * 100.0))
-                spin_range = (-100.0, 100.0)
+                spin_value = max(
+                    _MULTIPLIER_UI_MIN,
+                    min(_MULTIPLIER_UI_MAX, (summary.primary_value - 1.0) * 100.0),
+                )
+                spin_range = (_MULTIPLIER_UI_MIN, _MULTIPLIER_UI_MAX)
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
+            slider_min, slider_max = _primary_slider_bounds(
+                summary.transform_type,
+                summary.type_label,
+            )
+            with QSignalBlocker(self.primary_slider):
+                self.primary_slider.setRange(slider_min, slider_max)
+                self.primary_slider.setValue(int(round(spin_value)))
             with QSignalBlocker(self.primary_input):
                 self.primary_input.setDecimals(spin_decimals)
                 self.primary_input.setRange(*spin_range)
@@ -994,20 +1135,25 @@ class MainWindow(QMainWindow):
                 self.primary_input.setSuffix(spin_suffix)
                 self.primary_input.setValue(spin_value)
         if has_levels_controls:
-            for label_widget, input_widget, level_label, level_value in zip(
+            for label_widget, slider_widget, input_widget, level_label, level_value in zip(
                 self.level_labels,
+                self.level_sliders,
                 self.level_inputs,
                 summary.level_labels,
                 summary.level_values,
                 strict=False,
             ):
                 label_widget.setText(level_label)
+                ui_value = _brightness_amount_to_ui(level_value)
+                with QSignalBlocker(slider_widget):
+                    slider_widget.setRange(int(_MULTIPLIER_UI_MIN), int(_MULTIPLIER_UI_MAX))
+                    slider_widget.setValue(int(round(ui_value)))
                 with QSignalBlocker(input_widget):
                     input_widget.setDecimals(0)
-                    input_widget.setRange(-100.0, 100.0)
+                    input_widget.setRange(_MULTIPLIER_UI_MIN, _MULTIPLIER_UI_MAX)
                     input_widget.setSingleStep(1.0)
                     input_widget.setSuffix("%")
-                    input_widget.setValue(_brightness_amount_to_ui(level_value))
+                    input_widget.setValue(ui_value)
 
         self.secondary_label.setVisible(summary.secondary_label is not None)
         self.secondary_slider.setVisible(summary.secondary_value is not None)
@@ -1188,29 +1334,46 @@ class MainWindow(QMainWindow):
         summary = self.view_model.selected_adjustment_summary()
         if summary is None or summary.primary_value is None:
             return
-        if summary.transform_type == "colour_amount":
-            normalized = 1.0 + (value / 100.0)
-        elif summary.transform_type == "shift_colour_point":
-            normalized = value / 100.0
-        elif summary.type_label == "Smoothing":
-            normalized = value / 100.0
-        elif summary.transform_type == "brightness":
-            normalized = _brightness_ui_to_amount(value)
-        else:
-            normalized = 1.0 + (value / 100.0)
-        self.view_model.set_selected_adjustment_primary_value(normalized, render=False)
+        with QSignalBlocker(self.primary_slider):
+            self.primary_slider.setValue(int(round(value)))
+        self._apply_primary_value(value, render=False)
         self._schedule_adjustment_render()
+
+    def _on_primary_slider_value_changed(self, value: int) -> None:
+        summary = self.view_model.selected_adjustment_summary()
+        if summary is None or summary.primary_value is None:
+            return
+        with QSignalBlocker(self.primary_input):
+            self.primary_input.setValue(float(value))
+        self._apply_primary_value(
+            float(value),
+            render=not self.view_model.is_adjustment_interacting,
+        )
 
     def _on_level_value_changed(self, index: int, value: float) -> None:
         summary = self.view_model.selected_adjustment_summary()
         if summary is None or not summary.level_values:
             return
+        with QSignalBlocker(self.level_sliders[index]):
+            self.level_sliders[index].setValue(int(round(value)))
         self.view_model.set_selected_adjustment_level_value(
             index,
             _brightness_ui_to_amount(value),
             render=False,
         )
         self._schedule_adjustment_render()
+
+    def _on_level_slider_value_changed(self, index: int, value: int) -> None:
+        summary = self.view_model.selected_adjustment_summary()
+        if summary is None or not summary.level_values:
+            return
+        with QSignalBlocker(self.level_inputs[index]):
+            self.level_inputs[index].setValue(float(value))
+        self.view_model.set_selected_adjustment_level_value(
+            index,
+            _brightness_ui_to_amount(float(value)),
+            render=not self.view_model.is_adjustment_interacting,
+        )
 
     def _on_target_changed(self, index: int) -> None:
         if index < 0:
@@ -1232,6 +1395,22 @@ class MainWindow(QMainWindow):
     def _on_adjustment_slider_released(self) -> None:
         self.view_model.set_adjustment_interaction_active(False)
         self.view_model.request_preview_render(immediate=False)
+
+    def _apply_primary_value(self, value: float, *, render: bool) -> None:
+        summary = self.view_model.selected_adjustment_summary()
+        if summary is None or summary.primary_value is None:
+            return
+        if summary.transform_type == "colour_amount":
+            normalized = 1.0 + (value / 100.0)
+        elif summary.transform_type == "shift_colour_point":
+            normalized = value / 100.0
+        elif summary.type_label == "Smoothing":
+            normalized = value / 100.0
+        elif summary.transform_type == "brightness":
+            normalized = _brightness_ui_to_amount(value)
+        else:
+            normalized = 1.0 + (value / 100.0)
+        self.view_model.set_selected_adjustment_primary_value(normalized, render=render)
 
     def _schedule_adjustment_render(self) -> None:
         if self.view_model.is_adjustment_interacting:

@@ -20,22 +20,26 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 InteractionMode = Literal["navigate", "sampling", "draw_region", "edit_region"]
-SemanticOverlayMode = Literal["stars", "nebula"]
+SemanticOverlayMode = Literal["stars", "nebula", "dark_dust"]
 OVERLAY_TINTS: dict[SemanticOverlayMode, tuple[float, float, float]] = {
     "stars": (0.35, 0.78, 1.0),
     "nebula": (0.64, 0.9, 1.0),
+    "dark_dust": (0.94, 0.78, 0.26),
 }
 OVERLAY_FILL_ALPHA: dict[SemanticOverlayMode, float] = {
     "stars": 0.14,
     "nebula": 0.06,
+    "dark_dust": 0.10,
 }
 OVERLAY_EDGE_ALPHA: dict[SemanticOverlayMode, float] = {
     "stars": 0.44,
     "nebula": 0.24,
+    "dark_dust": 0.34,
 }
 OVERLAY_NON_TARGET_ALPHA: dict[SemanticOverlayMode, float] = {
     "stars": 0.82,
     "nebula": 0.72,
+    "dark_dust": 0.74,
 }
 
 
