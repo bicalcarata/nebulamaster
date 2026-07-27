@@ -72,6 +72,8 @@ _SHIFT_UI_MIN = -100.0
 _SHIFT_UI_MAX = 100.0
 _SMOOTHING_UI_MIN = 0.0
 _SMOOTHING_UI_MAX = 100.0
+_PALETTE_UI_MIN = 0.0
+_PALETTE_UI_MAX = 100.0
 
 
 def _brightness_amount_to_ui(amount: float) -> float:
@@ -85,6 +87,8 @@ def _brightness_ui_to_amount(value: float) -> float:
 def _primary_slider_bounds(transform_type: str, type_label: str) -> tuple[int, int]:
     if transform_type == "shift_colour_point":
         return int(_SHIFT_UI_MIN), int(_SHIFT_UI_MAX)
+    if transform_type == "faux_palette":
+        return int(_PALETTE_UI_MIN), int(_PALETTE_UI_MAX)
     if type_label == "Smoothing":
         return int(_SMOOTHING_UI_MIN), int(_SMOOTHING_UI_MAX)
     return int(_MULTIPLIER_UI_MIN), int(_MULTIPLIER_UI_MAX)
@@ -421,6 +425,7 @@ class MainWindow(QMainWindow):
         self.secondary_label.setStyleSheet("font-weight: 600;")
         self.secondary_slider = QSlider(Qt.Orientation.Horizontal)
         self.secondary_value_label = QLabel("")
+        self.option_checkbox = QCheckBox("Preserve Brightness")
 
         scope_title = QLabel("Apply in")
         scope_title.setStyleSheet("font-weight: 600;")
@@ -441,6 +446,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.secondary_label)
         layout.addWidget(self.secondary_slider)
         layout.addWidget(self.secondary_value_label)
+        layout.addWidget(self.option_checkbox)
         layout.addWidget(scope_title)
         layout.addWidget(self.apply_everywhere_checkbox)
         layout.addWidget(self.region_scope_list, 1)
@@ -631,6 +637,7 @@ class MainWindow(QMainWindow):
         self.secondary_slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
         self.secondary_slider.sliderReleased.connect(self._on_adjustment_slider_released)
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
+        self.option_checkbox.toggled.connect(self.view_model.set_selected_adjustment_option_enabled)
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
         self.region_scope_list.itemChanged.connect(self._on_region_scope_item_changed)
 
@@ -904,6 +911,10 @@ class MainWindow(QMainWindow):
             "Add Colour Smoothness adjustment",
             lambda: self.view_model.create_adjustment("smoothness"),
         )
+        menu.addAction(
+            "Add Faux Hubble adjustment",
+            lambda: self.view_model.create_adjustment("faux_hubble"),
+        )
         menu.exec(self.add_adjustment_button.mapToGlobal(self.add_adjustment_button.rect().bottomLeft()))
 
     def _on_project_loaded(self, project_name: str) -> None:
@@ -1028,6 +1039,10 @@ class MainWindow(QMainWindow):
             self.primary_label.setVisible(False)
             self.primary_controls.setVisible(False)
             self.level_inputs_container.setVisible(False)
+            self.secondary_label.setVisible(False)
+            self.secondary_slider.setVisible(False)
+            self.secondary_value_label.setVisible(False)
+            self.option_checkbox.setVisible(False)
             return
 
         self.adjustment_name_label.setText(summary.name)
@@ -1112,6 +1127,15 @@ class MainWindow(QMainWindow):
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
+            elif summary.transform_type == "faux_palette":
+                spin_value = max(
+                    _PALETTE_UI_MIN,
+                    min(_PALETTE_UI_MAX, summary.primary_value * 100.0),
+                )
+                spin_range = (_PALETTE_UI_MIN, _PALETTE_UI_MAX)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             else:
                 spin_value = max(
                     _MULTIPLIER_UI_MIN,
@@ -1164,6 +1188,11 @@ class MainWindow(QMainWindow):
             with QSignalBlocker(self.secondary_slider):
                 self.secondary_slider.setValue(int(round(summary.secondary_value * 100)))
             self.secondary_value_label.setText(f"{summary.secondary_value:.2f}")
+        self.option_checkbox.setVisible(summary.option_label is not None)
+        if summary.option_label is not None and summary.option_enabled is not None:
+            self.option_checkbox.setText(summary.option_label)
+            with QSignalBlocker(self.option_checkbox):
+                self.option_checkbox.setChecked(summary.option_enabled)
 
         with QSignalBlocker(self.apply_everywhere_checkbox):
             self.apply_everywhere_checkbox.setChecked(not summary.region_ids)
@@ -1408,6 +1437,8 @@ class MainWindow(QMainWindow):
             normalized = value / 100.0
         elif summary.transform_type == "brightness":
             normalized = _brightness_ui_to_amount(value)
+        elif summary.transform_type == "faux_palette":
+            normalized = value / 100.0
         else:
             normalized = 1.0 + (value / 100.0)
         self.view_model.set_selected_adjustment_primary_value(normalized, render=render)

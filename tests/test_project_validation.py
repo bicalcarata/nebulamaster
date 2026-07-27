@@ -55,6 +55,40 @@ def test_project_model_accepts_dark_dust_target_and_settings() -> None:
     assert project.dark_dust.sensitivity == 0.66
 
 
+def test_project_model_accepts_faux_palette_transform() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "faux-demo", "name": "Faux Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [{"id": "nebula", "name": "Nebula"}],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "faux-hubble",
+                    "name": "Faux Hubble",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "faux_palette",
+                        "palette": "hubble",
+                        "amount": 0.6,
+                        "preserve_brightness": True,
+                    },
+                }
+            ],
+        }
+    )
+
+    transform = project.rules[0].transform
+    assert transform.type == "faux_palette"
+
+
 def test_validate_valid_example_project() -> None:
     report = validate_project(ROOT / "examples/valid/minimal-project")
 

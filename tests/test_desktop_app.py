@@ -8,7 +8,8 @@ from typing import Any, cast
 import numpy as np
 import yaml
 from engine import semantic_target_influence
-from image_io import CanonicalImage, inspect_image
+from engine.render import render_bundle_output
+from image_io import CanonicalImage, inspect_image, load_canonical_image
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
     MainWindow,
@@ -25,6 +26,7 @@ from project_io import read_yaml_mapping
 from project_model import (
     BrightnessTransform,
     ColourAmountTransform,
+    FauxPaletteTransform,
     LevelsTransform,
     SaturationTransform,
     ShiftColourPointTransform,
@@ -319,6 +321,93 @@ def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
     assert window.primary_input.maximum() == 100.0
     assert window.primary_slider.minimum() == -100
     assert window.primary_slider.maximum() == 100
+
+
+def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("faux_hubble")
+    summary = view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Faux Hubble"
+    assert summary.transform_type == "faux_palette"
+    assert summary.target_id == "nebula"
+    assert summary.primary_label == "Amount"
+    assert summary.primary_value == 0.0
+    assert summary.option_label == "Preserve Brightness"
+    assert summary.option_enabled is True
+    assert summary.supports_colour_point is False
+
+    rule = view_model._selected_rule_model()
+    assert rule is not None
+    assert isinstance(rule.transform, FauxPaletteTransform)
+    view_model.duplicate_selected_adjustment()
+    assert view_model._selected_rule_model() is not None
+    view_model.set_selected_adjustment_enabled(False)
+    disabled_rule = view_model._selected_rule_model()
+    assert disabled_rule is not None
+    assert disabled_rule.enabled is False
+    view_model.reset_selected_adjustment()
+    reset_rule = view_model._selected_rule_model()
+    assert reset_rule is not None
+    assert reset_rule.enabled is True
+
+
+def test_desktop_export_matches_direct_renderer_for_faux_hubble(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "faux-hubble",
+            "name": "Faux Hubble",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "amount": 0.6,
+                "preserve_brightness": True,
+            },
+        }
+    )
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    native = view_model.native_render_dimensions()
+    assert native is not None
+    profile = view_model.build_screen_export_profile(
+        output_format="png",
+        width_px=native[0],
+        interpolation="nearest",
+    )
+    desktop_path = tmp_path / "desktop-export.png"
+    direct_path = tmp_path / "direct-export.png"
+    view_model.export_render(
+        output_path=desktop_path,
+        profile_id="screen-export",
+        profile=profile,
+        force=True,
+    )
+    assert view_model._working_documents is not None
+    render_bundle_output(
+        view_model._working_documents.bundle.model_copy(deep=True),
+        profile_id="screen-export",
+        profile=profile,
+        output_path=direct_path,
+        force=True,
+    )
+
+    desktop_image = load_canonical_image(desktop_path).data
+    direct_image = load_canonical_image(direct_path).data
+    assert np.allclose(desktop_image, direct_image)
 
 
 def test_adjustment_list_labels_use_target_and_omit_duplicate_type_text(

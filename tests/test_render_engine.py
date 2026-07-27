@@ -9,7 +9,7 @@ import yaml
 from engine import EXIT_INPUT_ERROR, EXIT_VALIDATION_SUCCESS
 from engine.render import apply_crop, plan_render, render_output
 from engine.selection import apply_levels_transform
-from image_io import CanonicalImage, resize_exact
+from image_io import CanonicalImage, load_canonical_image, resize_exact
 from PIL import Image
 from project_model import CropDeclaration, PrintRenderProfile, ScreenRenderProfile
 from renderer_cli.main import app
@@ -263,6 +263,71 @@ def test_normalized_crop_calculation_and_application() -> None:
 
     assert cropped.width == 60
     assert cropped.height == 40
+
+
+def test_cli_render_matches_direct_renderer_for_faux_hubble(tmp_path: Path) -> None:
+    profile_payload = {
+        "id": "screen",
+        "name": "Screen",
+        "profile": {
+            "type": "screen",
+            "format": "png",
+            "color_space": "srgb",
+            "bit_depth": 8,
+            "width_px": 480,
+            "interpolation": "nearest",
+        },
+    }
+    project_dir = _create_project(tmp_path, profile_payloads={"screen": profile_payload})
+    project_file = project_dir / "project.yaml"
+    payload = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules[:] = [
+        {
+            "id": "faux-hubble",
+            "name": "Faux Hubble",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "amount": 0.6,
+                "preserve_brightness": True,
+            },
+        }
+    ]
+    project_file.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    direct_path = tmp_path / "direct.png"
+    cli_path = tmp_path / "cli.png"
+    render_output(
+        project_dir,
+        profile_id="screen",
+        output_path=direct_path,
+        force=True,
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "render",
+            str(project_dir),
+            "--profile",
+            "screen",
+            "--output",
+            str(cli_path),
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0
+    direct_image = load_canonical_image(direct_path).data
+    cli_image = load_canonical_image(cli_path).data
+    assert np.allclose(direct_image, cli_image)
 
 
 def test_nearest_upscale_preserves_existing_pixels_without_inventing_detail() -> None:

@@ -11,6 +11,7 @@ from project_model import (
     ColourPoint,
     ColourSmoothingTransform,
     DeclarativeRule,
+    FauxPaletteTransform,
     LevelsTransform,
     ProjectBundle,
     SaturationTransform,
@@ -23,6 +24,7 @@ from .selection import (
     apply_brightness_transform,
     apply_colour_amount,
     apply_colour_smoothing,
+    apply_faux_palette,
     apply_levels_transform,
     apply_saturation_transform,
     apply_shift_colour_point,
@@ -180,6 +182,14 @@ def _apply_transform(
             weights,
             radius_fraction=transform.radius,
             strength=transform.strength,
+        )
+    if isinstance(transform, FauxPaletteTransform):
+        return apply_faux_palette(
+            current_image,
+            weights,
+            palette=transform.palette,
+            amount=transform.amount,
+            preserve_brightness=transform.preserve_brightness,
         )
     raise ValueError(f"unsupported transform type: {transform.type}")
 

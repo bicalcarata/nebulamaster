@@ -31,6 +31,7 @@ from project_model import (
     ColourSmoothingTransform,
     DarkDustSettings,
     DeclarativeRule,
+    FauxPaletteTransform,
     Feather,
     FileReference,
     LevelsTransform,
@@ -67,6 +68,7 @@ AdjustmentKind = Literal[
     "levels",
     "saturation",
     "smoothness",
+    "faux_hubble",
 ]
 SamplingPurpose = Literal["colour_point", "create_adjustment"]
 SemanticOverlaySelection = Literal["off", "stars", "nebula", "dark_dust"]
@@ -92,6 +94,8 @@ class AdjustmentSummary:
     primary_value: float | None
     secondary_label: str | None
     secondary_value: float | None
+    option_label: str | None
+    option_enabled: bool | None
     level_labels: tuple[str, ...]
     level_values: tuple[float, ...]
     helper_text: str
@@ -176,6 +180,10 @@ def _type_label(rule: DeclarativeRule) -> str:
         return "Saturation"
     if isinstance(transform, ColourSmoothingTransform):
         return "Smoothing"
+    if isinstance(transform, FauxPaletteTransform):
+        if transform.palette == "hubble":
+            return "Faux Hubble"
+        return transform.palette.replace("_", " ").title()
     return "Saved adjustment"
 
 
@@ -204,6 +212,12 @@ def _helper_text(rule: DeclarativeRule) -> str:
         return "Controls how vivid the selected colours appear in the final image."
     if isinstance(transform, ColourSmoothingTransform):
         return "Softens colour variations so the glow blends more naturally."
+    if isinstance(transform, FauxPaletteTransform):
+        return (
+            "Blends the current RGB image towards a Hubble-inspired gold, green and "
+            "cyan palette. This is a creative colour treatment and does not "
+            "reconstruct narrowband data."
+        )
     return "This saved adjustment is preserved and continues to render."
 
 
@@ -293,6 +307,7 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "levels": (),
         "saturation": (),
         "smoothness": (),
+        "faux_hubble": (),
     }[kind]
 
 
@@ -619,6 +634,8 @@ class ProjectEditorViewModel(QObject):
             primary_value: float | None = None
             secondary_label: str | None = None
             secondary_value: float | None = None
+            option_label: str | None = None
+            option_enabled: bool | None = None
             editable = False
             transform = rule.transform
             supports_colour_point = _supports_colour_point(transform)
@@ -651,6 +668,12 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.strength
                 secondary_label = "Reach"
                 secondary_value = transform.radius
+            elif isinstance(transform, FauxPaletteTransform):
+                editable = True
+                primary_label = "Amount"
+                primary_value = transform.amount
+                option_label = "Preserve Brightness"
+                option_enabled = transform.preserve_brightness
 
             summaries.append(
                 AdjustmentSummary(
@@ -672,6 +695,8 @@ class ProjectEditorViewModel(QObject):
                     primary_value=primary_value,
                     secondary_label=secondary_label,
                     secondary_value=secondary_value,
+                    option_label=option_label,
+                    option_enabled=option_enabled,
                     level_labels=("Darkest", "Dark", "Mid", "Light", "Brightest")
                     if isinstance(transform, LevelsTransform)
                     else (),
@@ -1060,6 +1085,8 @@ class ProjectEditorViewModel(QObject):
             transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, ColourSmoothingTransform):
             transform.strength = max(0.0, min(1.0, value))
+        elif isinstance(transform, FauxPaletteTransform):
+            transform.amount = max(0.0, min(1.0, value))
         else:
             return
         self._after_metadata_change(render=render)
@@ -1071,6 +1098,13 @@ class ProjectEditorViewModel(QObject):
         if isinstance(rule.transform, ColourSmoothingTransform):
             rule.transform.radius = value
             self._after_metadata_change(render=render)
+
+    def set_selected_adjustment_option_enabled(self, enabled: bool) -> None:
+        rule = self._selected_rule_model()
+        if rule is None or not isinstance(rule.transform, FauxPaletteTransform):
+            return
+        rule.transform.preserve_brightness = enabled
+        self._after_metadata_change(render=True)
 
     def set_selected_adjustment_level_value(
         self,
@@ -1580,6 +1614,11 @@ class ProjectEditorViewModel(QObject):
     def _default_target(self) -> SemanticTarget:
         return "combined"
 
+    def _default_target_for_kind(self, kind: AdjustmentKind) -> SemanticTarget:
+        if kind == "faux_hubble":
+            return "nebula"
+        return self._default_target()
+
     def _normalized_colour_sample(
         self,
         rule: DeclarativeRule,
@@ -1640,6 +1679,7 @@ class ProjectEditorViewModel(QObject):
             "levels": "Levels",
             "saturation": "Saturation",
             "smoothness": "Colour Smoothness",
+            "faux_hubble": "Faux Hubble",
         }[kind]
 
     def _selected_adjustment_name(self, kind: AdjustmentKind) -> str:
@@ -1655,6 +1695,7 @@ class ProjectEditorViewModel(QObject):
             "levels": "Selected Levels",
             "saturation": "Selected Saturation",
             "smoothness": "Selected Smoothing",
+            "faux_hubble": "Selected Faux Hubble",
         }[kind]
 
     def _unique_rule_id(self, base: str) -> str:
@@ -1696,6 +1737,7 @@ class ProjectEditorViewModel(QObject):
             | LevelsTransform
             | SaturationTransform
             | ColourSmoothingTransform
+            | FauxPaletteTransform
         )
         if kind == "blue":
             transform = ColourAmountTransform(type="colour_amount", channel="blue", amount=1.0)
@@ -1786,6 +1828,17 @@ class ProjectEditorViewModel(QObject):
                 colour_point=None,
                 softness=0.45,
             )
+        elif kind == "faux_hubble":
+            transform = FauxPaletteTransform(
+                type="faux_palette",
+                palette="hubble",
+                amount=0.0,
+                preserve_brightness=True,
+            )
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
         else:
             transform = ColourSmoothingTransform(
                 type="colour_smoothing",
@@ -1802,7 +1855,7 @@ class ProjectEditorViewModel(QObject):
             name=rule_name,
             enabled=True,
             selection_source="current",
-            target=self._default_target(),
+            target=self._default_target_for_kind(kind),
             match=match,
             regions=[],
             transform=transform,
@@ -2177,6 +2230,7 @@ class ProjectEditorViewModel(QObject):
                 ShiftColourPointTransform,
                 BrightnessTransform,
                 SaturationTransform,
+                FauxPaletteTransform,
             ),
         ):
             transform.amount = amount

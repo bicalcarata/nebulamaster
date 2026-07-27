@@ -337,3 +337,126 @@ def apply_colour_smoothing(
     output = (current_rgb * (1.0 - mix[..., None])) + (blurred * mix[..., None])
     clipped = np.clip(output, 0.0, 1.0).astype(np.float32, copy=False)
     return np.asarray(clipped, dtype=np.float32)
+
+
+def _rgb_hsv_planes(image_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    red = image_rgb[..., 0]
+    green = image_rgb[..., 1]
+    blue = image_rgb[..., 2]
+
+    maximum = np.max(image_rgb, axis=-1)
+    minimum = np.min(image_rgb, axis=-1)
+    delta = maximum - minimum
+
+    hue = np.zeros_like(maximum, dtype=np.float32)
+    mask = delta > EPSILON
+    red_max = mask & (maximum == red)
+    green_max = mask & (maximum == green)
+    blue_max = mask & (maximum == blue)
+
+    hue[red_max] = np.mod((green[red_max] - blue[red_max]) / delta[red_max], 6.0)
+    hue[green_max] = ((blue[green_max] - red[green_max]) / delta[green_max]) + 2.0
+    hue[blue_max] = ((red[blue_max] - green[blue_max]) / delta[blue_max]) + 4.0
+    hue = np.mod(hue / 6.0, 1.0).astype(np.float32, copy=False)
+
+    saturation = np.zeros_like(maximum, dtype=np.float32)
+    non_zero = maximum > EPSILON
+    saturation[non_zero] = delta[non_zero] / maximum[non_zero]
+    value = maximum.astype(np.float32, copy=False)
+    return hue, saturation, value
+
+
+def _hue_proximity(hue: np.ndarray, target: float, width: float) -> np.ndarray:
+    distance = np.abs(hue - target)
+    wrapped = np.minimum(distance, 1.0 - distance)
+    return np.clip(1.0 - (wrapped / max(width, EPSILON)), 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
+    )
+
+
+def _map_faux_hubble(current_rgb: np.ndarray) -> np.ndarray:
+    red = current_rgb[..., 0].astype(np.float32, copy=False)
+    green = current_rgb[..., 1].astype(np.float32, copy=False)
+    blue = current_rgb[..., 2].astype(np.float32, copy=False)
+    hue, saturation, value = _rgb_hsv_planes(current_rgb)
+
+    warm = np.clip((0.85 * red) + (0.25 * green) - (0.45 * blue), 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
+    )
+    orange = _hue_proximity(hue, 32.0 / 360.0, 0.16)
+    magenta = _hue_proximity(hue, 338.0 / 360.0, 0.18)
+    cyan = _hue_proximity(hue, 200.0 / 360.0, 0.18)
+    blue_cyan = np.clip((0.78 * blue) + (0.24 * green) - (0.30 * red), 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
+    )
+
+    warmth = np.clip(warm * (0.55 + (0.45 * saturation)), 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
+    )
+    faux_sii = np.clip(
+        warmth * ((0.55 + (0.45 * orange)) * (0.65 + (0.35 * value))),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    faux_ha = np.clip(
+        warmth * ((0.50 + (0.50 * magenta)) * (0.80 + (0.20 * (1.0 - orange)))),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    faux_oiii = np.clip(
+        blue_cyan * (0.55 + (0.45 * np.maximum(cyan, saturation))),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    mapped = np.empty_like(current_rgb, dtype=np.float32)
+    mapped[..., 0] = np.clip((1.00 * faux_sii) + (0.14 * faux_ha), 0.0, 1.0)
+    mapped[..., 1] = np.clip(
+        (0.82 * faux_ha) + (0.24 * faux_oiii) + (0.08 * faux_sii),
+        0.0,
+        1.0,
+    )
+    mapped[..., 2] = np.clip((0.96 * faux_oiii) + (0.12 * faux_ha), 0.0, 1.0)
+
+    green_excess = np.clip(
+        mapped[..., 1] - (0.78 * np.maximum(mapped[..., 0], mapped[..., 2])) - 0.04,
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    mapped[..., 1] = np.clip(mapped[..., 1] - (green_excess * 0.35), 0.0, 1.0)
+    mapped[..., 0] = np.clip(mapped[..., 0] + (green_excess * 0.20), 0.0, 1.0)
+    mapped[..., 2] = np.clip(mapped[..., 2] + (green_excess * 0.15), 0.0, 1.0)
+    return np.asarray(mapped, dtype=np.float32)
+
+
+def apply_faux_palette(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    palette: str,
+    amount: float,
+    preserve_brightness: bool,
+) -> np.ndarray:
+    clamped_amount = max(0.0, min(1.0, amount))
+    if clamped_amount <= EPSILON:
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
+    if palette != "hubble":
+        raise ValueError(f"unsupported faux palette: {palette}")
+
+    current_linear = srgb_to_linear(current_rgb)
+    original_luminance = np.tensordot(current_linear, LINEAR_LUMA, axes=([-1], [0]))
+    mapped_srgb = _map_faux_hubble(current_rgb)
+    mapped_linear = srgb_to_linear(mapped_srgb)
+    if preserve_brightness:
+        mapped_linear = _preserve_luminance(mapped_linear, original_luminance)
+
+    mapped_rgb = np.clip(linear_to_srgb(mapped_linear), 0.0, 1.0).astype(np.float32, copy=False)
+    blended_rgb = (
+        current_rgb * (1.0 - clamped_amount)
+    ) + (mapped_rgb * clamped_amount)
+    blended_linear = srgb_to_linear(np.clip(blended_rgb, 0.0, 1.0).astype(np.float32, copy=False))
+    return apply_weighted_image_blend(current_rgb, blended_linear, weights)

@@ -8,6 +8,7 @@ import numpy as np
 import yaml
 from engine import EXIT_VALIDATION_SUCCESS
 from engine.preview import render_preview, render_preview_image
+from engine.selection import apply_faux_palette, compute_luminance
 from engine.semantic import dark_dust_influence, star_influence
 from engine.validation import load_valid_project_bundle
 from image_io import load_canonical_image, resize_to_max_edge
@@ -248,6 +249,32 @@ def _rule_brightness(
         "regions": [],
         "match": {"softness": 0.5},
         "transform": {"type": "brightness", "amount": amount},
+    }
+
+
+def _rule_faux_palette(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "nebula",
+    amount: float = 0.0,
+    preserve_brightness: bool = True,
+    regions: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "faux_palette",
+            "palette": "hubble",
+            "amount": amount,
+            "preserve_brightness": preserve_brightness,
+        },
     }
 
 
@@ -746,3 +773,206 @@ def test_dark_dust_target_only_affects_broad_relative_dark_regions(tmp_path: Pat
     assert dark_dust_shift > 0.02
     assert abs(star_shift) < 0.02
     assert abs(background_shift) < 0.02
+
+
+def test_faux_hubble_amount_zero_produces_unchanged_output() -> None:
+    image = np.asarray(
+        [[[0.68, 0.22, 0.12], [0.12, 0.24, 0.72]]],
+        dtype=np.float32,
+    )
+    weights = np.ones((1, 2), dtype=np.float32)
+
+    transformed = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=0.0,
+        preserve_brightness=True,
+    )
+
+    assert np.allclose(transformed, image)
+
+
+def test_faux_hubble_amount_hundred_produces_full_mapped_result() -> None:
+    image = np.asarray(
+        [[[0.70, 0.26, 0.10], [0.12, 0.28, 0.74]]],
+        dtype=np.float32,
+    )
+    weights = np.ones((1, 2), dtype=np.float32)
+
+    full = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=1.0,
+        preserve_brightness=True,
+    )
+
+    assert not np.allclose(full, image)
+
+
+def test_faux_hubble_amount_fifty_is_midpoint_between_incoming_and_full_mapping() -> None:
+    image = np.asarray(
+        [[[0.72, 0.24, 0.12], [0.14, 0.30, 0.76]]],
+        dtype=np.float32,
+    )
+    weights = np.ones((1, 2), dtype=np.float32)
+    unchanged = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=0.0,
+        preserve_brightness=True,
+    )
+    midpoint = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=0.5,
+        preserve_brightness=True,
+    )
+    full = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=1.0,
+        preserve_brightness=True,
+    )
+
+    assert np.allclose(midpoint, (unchanged + full) / 2.0, atol=1e-5)
+
+
+def test_faux_hubble_preserve_brightness_keeps_luminance_within_tolerance() -> None:
+    image = np.asarray(
+        [[[0.70, 0.24, 0.10], [0.15, 0.28, 0.74], [0.52, 0.18, 0.18]]],
+        dtype=np.float32,
+    )
+    weights = np.ones((1, 3), dtype=np.float32)
+    transformed = apply_faux_palette(
+        image,
+        weights,
+        palette="hubble",
+        amount=1.0,
+        preserve_brightness=True,
+    )
+
+    source_luma = compute_luminance(image)
+    transformed_luma = compute_luminance(transformed)
+    assert np.allclose(source_luma, transformed_luma, atol=0.03)
+
+
+def test_faux_hubble_adjustment_consumes_output_of_earlier_adjustments(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        [
+            _rule_brightness(rule_id="lift", name="Lift", target="combined", amount=1.6),
+            _rule_faux_palette(rule_id="faux", name="Faux Hubble", target="combined", amount=1.0),
+        ],
+    )
+    preview_path = tmp_path / "ordered.png"
+    render_preview(project_dir, preview_path, force=True)
+    ordered = load_canonical_image(preview_path).data
+
+    project_reversed = _create_project(
+        tmp_path / "other",
+        [
+            _rule_faux_palette(rule_id="faux", name="Faux Hubble", target="combined", amount=1.0),
+            _rule_brightness(rule_id="lift", name="Lift", target="combined", amount=1.6),
+        ],
+    )
+    preview_reversed = tmp_path / "reversed.png"
+    render_preview(project_reversed, preview_reversed, force=True)
+    reversed_image = load_canonical_image(preview_reversed).data
+
+    assert not np.allclose(ordered, reversed_image)
+
+
+def test_faux_hubble_targeting_nebula_protects_stars(tmp_path: Path) -> None:
+    project_dir = tmp_path / "nebula-faux"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_star_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [_rule_faux_palette(rule_id="faux", name="Faux Hubble", target="nebula", amount=1.0)]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    preview_path = tmp_path / "nebula-faux.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+    star_delta = float(np.abs(preview[8, 10] - source[8, 10]).max())
+    nebula_delta = float(np.abs(preview[24, 32] - source[24, 32]).max())
+
+    assert star_delta < 0.02
+    assert nebula_delta > 0.02
+
+
+def test_faux_hubble_targeting_dark_dust_uses_dark_dust_mask(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dust-faux"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    image = np.full((48, 64, 3), 160, dtype=np.uint8)
+    image[12:36, 20:48, :] = [70, 55, 55]
+    image[7:10, 9:12, :] = 255
+    Image.fromarray(image, mode="RGB").save(project_dir / "sources/source.png", format="PNG")
+    payload = _base_project_payload(
+        [_rule_faux_palette(rule_id="faux", name="Faux Hubble", target="dark_dust", amount=1.0)]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    preview_path = tmp_path / "dust-faux.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+    dust_delta = float(np.abs(preview[24, 32] - source[24, 32]).max())
+    background_delta = float(np.abs(preview[4, 4] - source[4, 4]).max())
+
+    assert dust_delta > 0.02
+    assert background_delta < 0.02
+
+
+def test_faux_hubble_regions_constrain_the_effect(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        [
+            _rule_faux_palette(
+                rule_id="faux",
+                name="Faux Hubble",
+                target="combined",
+                amount=1.0,
+                regions=["lower-right"],
+            )
+        ],
+    )
+    preview_path = tmp_path / "regional.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+    inside_delta = float(np.abs(preview[36, 50] - source[36, 50]).max())
+    outside_delta = float(np.abs(preview[8, 8] - source[8, 8]).max())
+
+    assert inside_delta > 0.02
+    assert outside_delta < 0.02
+
+
+def test_faux_hubble_render_is_deterministic(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        [_rule_faux_palette(rule_id="faux", name="Faux Hubble", target="combined", amount=0.6)],
+    )
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    render_preview(project_dir, first_path, force=True)
+    render_preview(project_dir, second_path, force=True)
+
+    first = load_canonical_image(first_path).data
+    second = load_canonical_image(second_path).data
+    assert np.array_equal(first, second)

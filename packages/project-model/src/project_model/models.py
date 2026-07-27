@@ -29,6 +29,7 @@ DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 SelectionSource = Literal["original", "current"]
 ColourChannel = Literal["red", "green", "blue"]
 SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
+FauxPaletteId = Literal["hubble"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
@@ -240,13 +241,21 @@ class ColourSmoothingTransform(StrictModel):
     strength: float = Field(ge=0.0, le=1.0)
 
 
+class FauxPaletteTransform(StrictModel):
+    type: Literal["faux_palette"]
+    palette: FauxPaletteId
+    amount: float = Field(default=0.0, ge=0.0, le=1.0)
+    preserve_brightness: bool = True
+
+
 TransformationDeclaration = Annotated[
     ColourAmountTransform
     | ShiftColourPointTransform
     | BrightnessTransform
     | SaturationTransform
     | LevelsTransform
-    | ColourSmoothingTransform,
+    | ColourSmoothingTransform
+    | FauxPaletteTransform,
     Field(discriminator="type"),
 ]
 RuleTransform = TransformationDeclaration

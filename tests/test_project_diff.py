@@ -127,6 +127,39 @@ def test_project_dark_dust_setting_change_is_reported(tmp_path: Path) -> None:
     assert [change.code for change in result.modified_items] == ["project.dark_dust_changed"]
 
 
+def test_faux_hubble_amount_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    project_file = project_b / "project.yaml"
+    payload = _read_yaml(project_file)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "faux-hubble",
+            "name": "Faux Hubble",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "amount": 0.25,
+                "preserve_brightness": True,
+            },
+        }
+    )
+    _write_yaml(project_a / "project.yaml", payload)
+    rules[-1]["transform"]["amount"] = 0.60
+    _write_yaml(project_file, payload)
+
+    result = diff_projects(project_a, project_b)
+    summaries = [change.human_summary for change in result.modified_items]
+
+    assert "Changed Faux Hubble amount from 25% to 60%." in summaries
+
+
 def test_feather_only_region_change_is_distinguished(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")

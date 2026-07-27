@@ -13,6 +13,7 @@ from project_model import (
     DeclarativeRule,
     DiffExplanationEntry,
     DiffProjectIdentity,
+    FauxPaletteTransform,
     LevelsTransform,
     PluginLockEntry,
     ProjectBundle,
@@ -209,6 +210,10 @@ def _describe_colour_movement(
 
 def _percentage_amount(value: float) -> str:
     return f"{round((value - 1.0) * 100)}%"
+
+
+def _faux_palette_percentage(value: float) -> str:
+    return f"{round(value * 100)}%"
 
 
 def _format_range_summary(
@@ -775,6 +780,34 @@ def _compare_rules(
                 rule_b.transform, LevelsTransform
             ):
                 summary = f"{rule_b.name} levels changed."
+            elif isinstance(rule_a.transform, FauxPaletteTransform) and isinstance(
+                rule_b.transform, FauxPaletteTransform
+            ):
+                if (
+                    rule_a.transform.palette == rule_b.transform.palette
+                    and rule_a.transform.amount != rule_b.transform.amount
+                    and rule_a.transform.preserve_brightness
+                    == rule_b.transform.preserve_brightness
+                ):
+                    summary = (
+                        f"Changed {rule_b.name} amount from "
+                        f"{_faux_palette_percentage(rule_a.transform.amount)} to "
+                        f"{_faux_palette_percentage(rule_b.transform.amount)}."
+                    )
+                elif (
+                    rule_a.transform.palette == rule_b.transform.palette
+                    and rule_a.transform.amount == rule_b.transform.amount
+                    and rule_a.transform.preserve_brightness
+                    != rule_b.transform.preserve_brightness
+                ):
+                    state = (
+                        "enabled"
+                        if rule_b.transform.preserve_brightness
+                        else "disabled"
+                    )
+                    summary = f"{rule_b.name} brightness preservation was {state}."
+                else:
+                    summary = f"{rule_b.name} faux palette changed."
             elif isinstance(rule_a.transform, ColourSmoothingTransform) and isinstance(
                 rule_b.transform, ColourSmoothingTransform
             ):
