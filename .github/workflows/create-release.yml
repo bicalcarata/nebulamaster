@@ -1,0 +1,78 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to create, for example v0.2.0
+        required: true
+        type: string
+      target_ref:
+        description: Branch or commit to tag
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_ref }}
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release version must look like v0.2.0 or v0.2.0-beta.1." >&2
+            exit 1
+          fi
+
+      - name: Confirm project version matches tag
+        run: |
+          python -c "import pathlib, tomllib; data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); expected = '${{ inputs.version }}'[1:]; actual = data['project']['version']; print(f'pyproject.toml version: {actual}'); raise SystemExit(0 if actual == expected else f'pyproject.toml version {actual} does not match release tag {expected}')"
+
+      - name: Ensure the tag does not already exist
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if git rev-parse "${version}" >/dev/null 2>&1; then
+            echo "Tag ${version} already exists locally." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${version}" >/dev/null 2>&1; then
+            echo "Tag ${version} already exists on origin." >&2
+            exit 1
+          fi
+
+      - name: Create annotated release tag
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${version}" -m "Release ${version}"
+
+      - name: Push release tag
+        shell: bash
+        run: |
+          git push origin "${{ inputs.version }}"
+
+      - name: Summarize next step
+        shell: bash
+        run: |
+          echo "Created tag ${{ inputs.version }} from ${{ inputs.target_ref }}."
+          echo "The Package Desktop workflow will now build macOS and Windows artifacts and publish the GitHub Release."

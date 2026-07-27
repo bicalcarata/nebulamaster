@@ -342,15 +342,19 @@ The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/neb
 
 ## CI And Releases
 
-The repository includes two GitHub Actions workflows:
+The repository includes three GitHub Actions workflows:
 
 - [.github/workflows/ci.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/ci.yml) runs the main lint, typecheck, and test suite on Ubuntu and a Windows desktop import smoke test on `windows-latest`.
+- [.github/workflows/create-release.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/create-release.yml) is a manual release-tag workflow. It validates the requested version, confirms it matches [pyproject.toml](/Users/damon/gitlab/nebulamaster/pyproject.toml), and pushes the version tag to GitHub.
 - [.github/workflows/package-desktop.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/package-desktop.yml) builds standalone desktop artifacts on macOS and Windows on demand and on version tags.
 
 Release flow:
 
-1. Push a version tag such as `v0.1.0`.
-2. GitHub Actions builds the macOS and Windows desktop artifacts.
-3. The workflow uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
+1. Update [pyproject.toml](/Users/damon/gitlab/nebulamaster/pyproject.toml) to the release version, for example `0.2.0`, and push the commit to GitHub.
+2. In GitHub, open `Actions` -> `Create Release` -> `Run workflow`.
+3. Enter a version tag such as `v0.2.0` and choose the target ref, usually `main`.
+4. The workflow creates and pushes the annotated tag.
+5. The tag triggers `Package Desktop`, which builds the macOS and Windows desktop artifacts.
+6. `Package Desktop` uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
 
 For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.
