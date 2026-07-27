@@ -233,11 +233,11 @@ Current desktop workflows include:
 
 - Create a new project from a TIFF, PNG, or JPEG source image
 - Open and edit declarative projects
-- Target adjustments at `Nebula`, `Stars`, or `Combined Image`
+- Target adjustments at `Nebula`, `Stars`, `Dark Dust`, or `Combined Image`
 - Pick colour points directly from the image
 - Create adjustments from image selections
 - Draw polygon regions and scope adjustments to them
-- Preview semantic star and nebula overlays
+- Preview semantic star, nebula, and dark dust overlays
 - Keep semantic unsaved-change history
 
 ## Current Adjustment Types
@@ -255,6 +255,11 @@ The desktop currently supports these editable adjustment types:
 - Cyan
 - Yellow
 - Colour Smoothness
+- Faux Hubble
+- Faux HOO
+- Foraxx-Inspired
+- Gold & Cyan
+- Natural Bi-colour
 
 Levels is implemented as a five-band tonal adjustment with explicit controls for:
 
@@ -263,6 +268,12 @@ Levels is implemented as a five-band tonal adjustment with explicit controls for
 - Mid
 - Light
 - Brightest
+
+The faux palette adjustments operate on prepared RGB images rather than reconstructed
+narrowband channels. `Amount` is a wet/dry blend from the incoming image state to the
+full palette result, `Nebula` is the recommended default target, and the same adjustments
+can also be constrained with regions or directed at `Dark Dust` while leaving `Stars`
+more natural.
 
 ## Export
 

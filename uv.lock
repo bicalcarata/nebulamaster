@@ -173,7 +173,7 @@ wheels = [
 
 [[package]]
 name = "nebula-desktop"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "apps/desktop" }
 dependencies = [
     { name = "nebula-engine" },
@@ -194,7 +194,7 @@ requires-dist = [
 
 [[package]]
 name = "nebula-engine"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/engine" }
 dependencies = [
     { name = "nebula-image-io" },
@@ -213,7 +213,7 @@ requires-dist = [
 
 [[package]]
 name = "nebula-image-io"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/image-io" }
 dependencies = [
     { name = "numpy" },
@@ -230,7 +230,7 @@ requires-dist = [
 
 [[package]]
 name = "nebula-project-io"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/project-io" }
 dependencies = [
     { name = "nebula-project-model" },
@@ -247,7 +247,7 @@ requires-dist = [
 
 [[package]]
 name = "nebula-project-model"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/project-model" }
 dependencies = [
     { name = "pydantic" },
@@ -258,7 +258,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.8" }]
 
 [[package]]
 name = "nebula-renderer-cli"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "apps/renderer-cli" }
 dependencies = [
     { name = "nebula-engine" },
@@ -275,7 +275,7 @@ requires-dist = [
 
 [[package]]
 name = "nebula-versioning"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/versioning" }
 dependencies = [
     { name = "nebula-engine" },
@@ -294,7 +294,7 @@ requires-dist = [
 
 [[package]]
 name = "nebulamaster-workspace"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "nebula-desktop" },

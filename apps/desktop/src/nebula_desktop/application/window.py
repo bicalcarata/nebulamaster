@@ -915,6 +915,22 @@ class MainWindow(QMainWindow):
             "Add Faux Hubble adjustment",
             lambda: self.view_model.create_adjustment("faux_hubble"),
         )
+        menu.addAction(
+            "Add Faux HOO adjustment",
+            lambda: self.view_model.create_adjustment("faux_hoo"),
+        )
+        menu.addAction(
+            "Add Foraxx-Inspired adjustment",
+            lambda: self.view_model.create_adjustment("foraxx"),
+        )
+        menu.addAction(
+            "Add Gold & Cyan adjustment",
+            lambda: self.view_model.create_adjustment("gold_cyan"),
+        )
+        menu.addAction(
+            "Add Natural Bi-colour adjustment",
+            lambda: self.view_model.create_adjustment("natural_bicolour"),
+        )
         menu.exec(self.add_adjustment_button.mapToGlobal(self.add_adjustment_button.rect().bottomLeft()))
 
     def _on_project_loaded(self, project_name: str) -> None:

@@ -216,6 +216,16 @@ def _faux_palette_percentage(value: float) -> str:
     return f"{round(value * 100)}%"
 
 
+def _faux_palette_name(palette: str) -> str:
+    return {
+        "hubble": "Faux Hubble",
+        "hoo": "Faux HOO",
+        "foraxx": "Foraxx-Inspired",
+        "gold_cyan": "Gold & Cyan",
+        "natural_bicolour": "Natural Bi-colour",
+    }.get(palette, palette.replace("_", " ").title())
+
+
 def _format_range_summary(
     name: str,
     old_value: RangeSelection | None,
@@ -806,6 +816,11 @@ def _compare_rules(
                         else "disabled"
                     )
                     summary = f"{rule_b.name} brightness preservation was {state}."
+                elif rule_a.transform.palette != rule_b.transform.palette:
+                    summary = (
+                        f"Changed palette from {_faux_palette_name(rule_a.transform.palette)} "
+                        f"to {_faux_palette_name(rule_b.transform.palette)}."
+                    )
                 else:
                     summary = f"{rule_b.name} faux palette changed."
             elif isinstance(rule_a.transform, ColourSmoothingTransform) and isinstance(

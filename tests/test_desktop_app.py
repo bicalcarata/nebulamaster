@@ -355,6 +355,29 @@ def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path
     assert reset_rule.enabled is True
 
 
+def test_additional_faux_palette_adjustments_use_shared_controls(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    expected: tuple[tuple[AdjustmentKind, str], ...] = (
+        ("faux_hoo", "Faux HOO"),
+        ("foraxx", "Foraxx-Inspired"),
+        ("gold_cyan", "Gold & Cyan"),
+        ("natural_bicolour", "Natural Bi-colour"),
+    )
+    for kind, label in expected:
+        view_model.create_adjustment(kind)
+        summary = view_model.selected_adjustment_summary()
+        assert summary is not None
+        assert summary.type_label == label
+        assert summary.transform_type == "faux_palette"
+        assert summary.target_id == "nebula"
+        rule = view_model._selected_rule_model()
+        assert rule is not None
+        assert isinstance(rule.transform, FauxPaletteTransform)
+
+
 def test_desktop_export_matches_direct_renderer_for_faux_hubble(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     project_path = project_dir / "project.yaml"

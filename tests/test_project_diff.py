@@ -160,6 +160,45 @@ def test_faux_hubble_amount_change_is_reported_semantically(tmp_path: Path) -> N
     assert "Changed Faux Hubble amount from 25% to 60%." in summaries
 
 
+def test_faux_palette_name_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    project_file = project_a / "project.yaml"
+    payload = _read_yaml(project_file)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "faux-palette",
+            "name": "Faux HOO",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "dark_dust",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hoo",
+                "amount": 0.25,
+                "preserve_brightness": True,
+            },
+        }
+    )
+    _write_yaml(project_file, payload)
+    project_b_file = project_b / "project.yaml"
+    _write_yaml(project_b_file, payload)
+    other_payload = _read_yaml(project_b_file)
+    other_rules = other_payload["rules"]
+    assert isinstance(other_rules, list)
+    other_rules[-1]["name"] = "Gold & Cyan"
+    other_rules[-1]["transform"]["palette"] = "gold_cyan"
+    _write_yaml(project_b_file, other_payload)
+
+    result = diff_projects(project_a, project_b)
+    summaries = [change.human_summary for change in result.modified_items]
+
+    assert "Changed palette from Faux HOO to Gold & Cyan." in summaries
+
+
 def test_feather_only_region_change_is_distinguished(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")

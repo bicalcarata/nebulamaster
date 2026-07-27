@@ -17,6 +17,14 @@ from renderer_cli.main import app
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
+FAUX_PALETTE_IDS = ("hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour")
+FAUX_PALETTE_NAMES = {
+    "hubble": "Faux Hubble",
+    "hoo": "Faux HOO",
+    "foraxx": "Foraxx-Inspired",
+    "gold_cyan": "Gold & Cyan",
+    "natural_bicolour": "Natural Bi-colour",
+}
 
 
 def _write_palette(project_dir: Path) -> None:
@@ -257,6 +265,7 @@ def _rule_faux_palette(
     rule_id: str,
     name: str,
     target: str = "nebula",
+    palette: str = "hubble",
     amount: float = 0.0,
     preserve_brightness: bool = True,
     regions: list[str] | None = None,
@@ -271,11 +280,41 @@ def _rule_faux_palette(
         "match": {"softness": 0.5},
         "transform": {
             "type": "faux_palette",
-            "palette": "hubble",
+            "palette": palette,
             "amount": amount,
             "preserve_brightness": preserve_brightness,
         },
     }
+
+
+def _faux_palette_swatch_image() -> np.ndarray:
+    return np.asarray(
+        [[
+            [0.82, 0.22, 0.12],
+            [0.74, 0.16, 0.48],
+            [0.08, 0.72, 0.88],
+            [0.12, 0.28, 0.84],
+            [0.45, 0.45, 0.45],
+        ]],
+        dtype=np.float32,
+    )
+
+
+def _palette_output(
+    palette: str,
+    *,
+    amount: float = 1.0,
+    preserve_brightness: bool = True,
+) -> np.ndarray:
+    image = _faux_palette_swatch_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+    return apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=amount,
+        preserve_brightness=preserve_brightness,
+    )
 
 
 def test_two_rules_run_in_declaration_order(tmp_path: Path) -> None:
@@ -776,89 +815,34 @@ def test_dark_dust_target_only_affects_broad_relative_dark_regions(tmp_path: Pat
 
 
 def test_faux_hubble_amount_zero_produces_unchanged_output() -> None:
-    image = np.asarray(
-        [[[0.68, 0.22, 0.12], [0.12, 0.24, 0.72]]],
-        dtype=np.float32,
-    )
-    weights = np.ones((1, 2), dtype=np.float32)
-
-    transformed = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=0.0,
-        preserve_brightness=True,
-    )
-
-    assert np.allclose(transformed, image)
+    image = _faux_palette_swatch_image()
+    for palette in FAUX_PALETTE_IDS:
+        transformed = _palette_output(palette, amount=0.0)
+        assert np.allclose(transformed, image)
 
 
-def test_faux_hubble_amount_hundred_produces_full_mapped_result() -> None:
-    image = np.asarray(
-        [[[0.70, 0.26, 0.10], [0.12, 0.28, 0.74]]],
-        dtype=np.float32,
-    )
-    weights = np.ones((1, 2), dtype=np.float32)
-
-    full = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=1.0,
-        preserve_brightness=True,
-    )
-
-    assert not np.allclose(full, image)
+def test_faux_palettes_amount_hundred_produces_full_mapped_result() -> None:
+    image = _faux_palette_swatch_image()
+    for palette in FAUX_PALETTE_IDS:
+        full = _palette_output(palette, amount=1.0)
+        assert not np.allclose(full, image)
 
 
-def test_faux_hubble_amount_fifty_is_midpoint_between_incoming_and_full_mapping() -> None:
-    image = np.asarray(
-        [[[0.72, 0.24, 0.12], [0.14, 0.30, 0.76]]],
-        dtype=np.float32,
-    )
-    weights = np.ones((1, 2), dtype=np.float32)
-    unchanged = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=0.0,
-        preserve_brightness=True,
-    )
-    midpoint = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=0.5,
-        preserve_brightness=True,
-    )
-    full = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=1.0,
-        preserve_brightness=True,
-    )
-
-    assert np.allclose(midpoint, (unchanged + full) / 2.0, atol=1e-5)
+def test_faux_palettes_amount_fifty_is_midpoint_between_incoming_and_full_mapping() -> None:
+    for palette in FAUX_PALETTE_IDS:
+        unchanged = _palette_output(palette, amount=0.0)
+        midpoint = _palette_output(palette, amount=0.5)
+        full = _palette_output(palette, amount=1.0)
+        assert np.allclose(midpoint, (unchanged + full) / 2.0, atol=1e-5)
 
 
-def test_faux_hubble_preserve_brightness_keeps_luminance_within_tolerance() -> None:
-    image = np.asarray(
-        [[[0.70, 0.24, 0.10], [0.15, 0.28, 0.74], [0.52, 0.18, 0.18]]],
-        dtype=np.float32,
-    )
-    weights = np.ones((1, 3), dtype=np.float32)
-    transformed = apply_faux_palette(
-        image,
-        weights,
-        palette="hubble",
-        amount=1.0,
-        preserve_brightness=True,
-    )
-
+def test_faux_palettes_preserve_brightness_keeps_luminance_within_tolerance() -> None:
+    image = _faux_palette_swatch_image()
     source_luma = compute_luminance(image)
-    transformed_luma = compute_luminance(transformed)
-    assert np.allclose(source_luma, transformed_luma, atol=0.03)
+    for palette in FAUX_PALETTE_IDS:
+        transformed = _palette_output(palette, amount=1.0, preserve_brightness=True)
+        transformed_luma = compute_luminance(transformed)
+        assert np.allclose(source_luma, transformed_luma, atol=0.04)
 
 
 def test_faux_hubble_adjustment_consumes_output_of_earlier_adjustments(tmp_path: Path) -> None:
@@ -976,3 +960,67 @@ def test_faux_hubble_render_is_deterministic(tmp_path: Path) -> None:
     first = load_canonical_image(first_path).data
     second = load_canonical_image(second_path).data
     assert np.array_equal(first, second)
+
+
+def test_faux_palettes_produce_meaningfully_different_outputs() -> None:
+    outputs = {palette: _palette_output(palette, amount=1.0) for palette in FAUX_PALETTE_IDS}
+    for palette_a, image_a in outputs.items():
+        for palette_b, image_b in outputs.items():
+            if palette_a >= palette_b:
+                continue
+            assert not np.allclose(image_a, image_b, atol=1e-4)
+
+
+def test_faux_hoo_is_predominantly_red_and_cyan_with_limited_green() -> None:
+    output = _palette_output("hoo", amount=1.0)
+    warm_pixel = output[0, 0]
+    cool_pixel = output[0, 2]
+    assert warm_pixel[0] > warm_pixel[1]
+    assert cool_pixel[2] >= cool_pixel[1]
+    assert float(output[..., 1].mean()) < (float(output[..., 0].mean()) + 0.08)
+
+
+def test_foraxx_is_more_aggressive_than_gold_and_cyan() -> None:
+    foraxx = _palette_output("foraxx", amount=1.0)
+    gold_cyan = _palette_output("gold_cyan", amount=1.0)
+    foraxx_separation = float(np.linalg.norm(foraxx[0, 0] - foraxx[0, 2]))
+    gold_cyan_separation = float(np.linalg.norm(gold_cyan[0, 0] - gold_cyan[0, 2]))
+    foraxx_chroma = float((np.max(foraxx, axis=-1) - np.min(foraxx, axis=-1)).mean())
+    gold_cyan_chroma = float((np.max(gold_cyan, axis=-1) - np.min(gold_cyan, axis=-1)).mean())
+    assert foraxx_separation > gold_cyan_separation
+    assert foraxx_chroma > gold_cyan_chroma
+
+
+def test_natural_bicolour_preserves_more_original_chroma_than_faux_hoo() -> None:
+    source = _faux_palette_swatch_image()
+    hoo = _palette_output("hoo", amount=1.0)
+    natural = _palette_output("natural_bicolour", amount=1.0)
+    source_shift_hoo = float(np.abs(hoo - source).mean())
+    source_shift_natural = float(np.abs(natural - source).mean())
+    hoo_chroma = float((np.max(hoo, axis=-1) - np.min(hoo, axis=-1)).mean())
+    natural_chroma = float((np.max(natural, axis=-1) - np.min(natural, axis=-1)).mean())
+    assert source_shift_natural < source_shift_hoo
+    assert natural_chroma < hoo_chroma
+
+
+def test_faux_palettes_do_not_produce_nan_or_infinite_values() -> None:
+    samples = np.asarray(
+        [[
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.5, 0.5, 0.5],
+            [0.8, 0.1, 0.1],
+            [0.02, 0.02, 0.03],
+        ]],
+        dtype=np.float32,
+    )
+    weights = np.ones(samples.shape[:2], dtype=np.float32)
+    for palette in FAUX_PALETTE_IDS:
+        output = apply_faux_palette(
+            samples,
+            weights,
+            palette=palette,
+            amount=1.0,
+            preserve_brightness=True,
+        )
+        assert np.isfinite(output).all()

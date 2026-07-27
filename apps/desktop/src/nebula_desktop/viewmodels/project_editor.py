@@ -69,9 +69,57 @@ AdjustmentKind = Literal[
     "saturation",
     "smoothness",
     "faux_hubble",
+    "faux_hoo",
+    "foraxx",
+    "gold_cyan",
+    "natural_bicolour",
 ]
 SamplingPurpose = Literal["colour_point", "create_adjustment"]
 SemanticOverlaySelection = Literal["off", "stars", "nebula", "dark_dust"]
+
+FAUX_PALETTE_DISPLAY_NAMES: dict[str, str] = {
+    "hubble": "Faux Hubble",
+    "hoo": "Faux HOO",
+    "foraxx": "Foraxx-Inspired",
+    "gold_cyan": "Gold & Cyan",
+    "natural_bicolour": "Natural Bi-colour",
+}
+
+FAUX_PALETTE_HELPER_TEXT: dict[str, str] = {
+    "hubble": (
+        "Blends the current RGB image towards a Hubble-inspired gold, green and cyan "
+        "palette. This is a creative colour treatment and does not reconstruct "
+        "narrowband data."
+    ),
+    "hoo": (
+        "Blends the current RGB image towards a red and cyan dual-band-inspired "
+        "palette. This is a creative colour treatment and does not reconstruct "
+        "narrowband data."
+    ),
+    "foraxx": (
+        "Blends the current RGB image towards a dramatic amber and cyan palette "
+        "inspired by modern narrowband processing. This is a creative colour "
+        "treatment and does not reconstruct narrowband data."
+    ),
+    "gold_cyan": (
+        "Blends the current RGB image towards a balanced gold and cyan creative "
+        "palette. This is a creative colour treatment and does not reconstruct "
+        "narrowband data."
+    ),
+    "natural_bicolour": (
+        "Blends the current RGB image towards a restrained photographic red and cyan "
+        "palette. This is a creative colour treatment and does not reconstruct "
+        "narrowband data."
+    ),
+}
+
+FAUX_PALETTE_KIND_TO_ID: dict[AdjustmentKind, str] = {
+    "faux_hubble": "hubble",
+    "faux_hoo": "hoo",
+    "foraxx": "foraxx",
+    "gold_cyan": "gold_cyan",
+    "natural_bicolour": "natural_bicolour",
+}
 
 
 @dataclass(frozen=True)
@@ -181,9 +229,10 @@ def _type_label(rule: DeclarativeRule) -> str:
     if isinstance(transform, ColourSmoothingTransform):
         return "Smoothing"
     if isinstance(transform, FauxPaletteTransform):
-        if transform.palette == "hubble":
-            return "Faux Hubble"
-        return transform.palette.replace("_", " ").title()
+        return FAUX_PALETTE_DISPLAY_NAMES.get(
+            transform.palette,
+            transform.palette.replace("_", " ").title(),
+        )
     return "Saved adjustment"
 
 
@@ -213,11 +262,7 @@ def _helper_text(rule: DeclarativeRule) -> str:
     if isinstance(transform, ColourSmoothingTransform):
         return "Softens colour variations so the glow blends more naturally."
     if isinstance(transform, FauxPaletteTransform):
-        return (
-            "Blends the current RGB image towards a Hubble-inspired gold, green and "
-            "cyan palette. This is a creative colour treatment and does not "
-            "reconstruct narrowband data."
-        )
+        return FAUX_PALETTE_HELPER_TEXT.get(transform.palette, FAUX_PALETTE_HELPER_TEXT["hubble"])
     return "This saved adjustment is preserved and continues to render."
 
 
@@ -308,6 +353,10 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "saturation": (),
         "smoothness": (),
         "faux_hubble": (),
+        "faux_hoo": (),
+        "foraxx": (),
+        "gold_cyan": (),
+        "natural_bicolour": (),
     }[kind]
 
 
@@ -1615,7 +1664,7 @@ class ProjectEditorViewModel(QObject):
         return "combined"
 
     def _default_target_for_kind(self, kind: AdjustmentKind) -> SemanticTarget:
-        if kind == "faux_hubble":
+        if kind in FAUX_PALETTE_KIND_TO_ID:
             return "nebula"
         return self._default_target()
 
@@ -1680,6 +1729,10 @@ class ProjectEditorViewModel(QObject):
             "saturation": "Saturation",
             "smoothness": "Colour Smoothness",
             "faux_hubble": "Faux Hubble",
+            "faux_hoo": "Faux HOO",
+            "foraxx": "Foraxx-Inspired",
+            "gold_cyan": "Gold & Cyan",
+            "natural_bicolour": "Natural Bi-colour",
         }[kind]
 
     def _selected_adjustment_name(self, kind: AdjustmentKind) -> str:
@@ -1696,6 +1749,10 @@ class ProjectEditorViewModel(QObject):
             "saturation": "Selected Saturation",
             "smoothness": "Selected Smoothing",
             "faux_hubble": "Selected Faux Hubble",
+            "faux_hoo": "Selected Faux HOO",
+            "foraxx": "Selected Foraxx-Inspired",
+            "gold_cyan": "Selected Gold & Cyan",
+            "natural_bicolour": "Selected Natural Bi-colour",
         }[kind]
 
     def _unique_rule_id(self, base: str) -> str:
@@ -1828,10 +1885,13 @@ class ProjectEditorViewModel(QObject):
                 colour_point=None,
                 softness=0.45,
             )
-        elif kind == "faux_hubble":
+        elif kind in FAUX_PALETTE_KIND_TO_ID:
             transform = FauxPaletteTransform(
                 type="faux_palette",
-                palette="hubble",
+                palette=cast(
+                    Literal["hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour"],
+                    FAUX_PALETTE_KIND_TO_ID[kind],
+                ),
                 amount=0.0,
                 preserve_brightness=True,
             )

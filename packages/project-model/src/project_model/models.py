@@ -29,7 +29,7 @@ DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 SelectionSource = Literal["original", "current"]
 ColourChannel = Literal["red", "green", "blue"]
 SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
-FauxPaletteId = Literal["hubble"]
+FauxPaletteId = Literal["hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
