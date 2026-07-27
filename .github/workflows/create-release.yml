@@ -14,6 +14,7 @@ on:
         type: string
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -71,8 +72,18 @@ jobs:
         run: |
           git push origin "${{ inputs.version }}"
 
+      - name: Start packaging workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh workflow run package-desktop.yml \
+            --ref "${{ inputs.version }}" \
+            -f release_tag="${{ inputs.version }}"
+
       - name: Summarize next step
         shell: bash
         run: |
           echo "Created tag ${{ inputs.version }} from ${{ inputs.target_ref }}."
-          echo "The Package Desktop workflow will now build macOS and Windows artifacts and publish the GitHub Release."
+          echo "Started Package Desktop for ${{ inputs.version }}."
+          echo "That workflow will build macOS and Windows artifacts and publish the GitHub Release."

@@ -354,7 +354,8 @@ Release flow:
 2. In GitHub, open `Actions` -> `Create Release` -> `Run workflow`.
 3. Enter a version tag such as `v0.2.0` and choose the target ref, usually `main`.
 4. The workflow creates and pushes the annotated tag.
-5. The tag triggers `Package Desktop`, which builds the macOS and Windows desktop artifacts.
-6. `Package Desktop` uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
+5. The same workflow then starts `Package Desktop` explicitly for that tag, which avoids GitHub's suppressed follow-on workflow behavior for `GITHUB_TOKEN` tag pushes.
+6. `Package Desktop` builds the macOS and Windows desktop artifacts.
+7. `Package Desktop` uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
 
 For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.

@@ -2,12 +2,20 @@ name: Package Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish, for example v0.1.0. Leave empty for an artifact-only test build.
+        required: false
+        type: string
   push:
     tags:
       - "v*"
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   package-macos:
@@ -41,17 +49,17 @@ jobs:
             dist/NebulaMaster.dmg
 
       - name: Create or update GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
-          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+          gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --generate-notes
           files=("dist/NebulaMaster.app.zip")
           if [[ -f "dist/NebulaMaster.dmg" ]]; then
             files+=("dist/NebulaMaster.dmg")
           fi
-          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+          gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
 
   package-windows:
     runs-on: windows-latest
@@ -88,15 +96,16 @@ jobs:
             dist/NebulaMaster-Setup.exe
 
       - name: Upload Windows release asset
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          gh release view "${env:GITHUB_REF_NAME}" *> $null
+          gh release view "${env:RELEASE_TAG}" *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "${env:GITHUB_REF_NAME}" --title "${env:GITHUB_REF_NAME}" --generate-notes
+            gh release create "${env:RELEASE_TAG}" --title "${env:RELEASE_TAG}" --generate-notes
           }
-          gh release upload "${env:GITHUB_REF_NAME}" "dist/NebulaMaster-windows.zip" --clobber
+          gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-windows.zip" --clobber
           if (Test-Path "dist/NebulaMaster-Setup.exe") {
-            gh release upload "${env:GITHUB_REF_NAME}" "dist/NebulaMaster-Setup.exe" --clobber
+            gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-Setup.exe" --clobber
           }
