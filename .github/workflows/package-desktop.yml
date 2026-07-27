@@ -19,7 +19,7 @@ env:
 
 jobs:
   prepare-release:
-    if: startsWith(env.RELEASE_TAG, 'v')
+    if: ${{ startsWith(inputs.release_tag || github.ref_name, 'v') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -81,6 +83,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Install Inno Setup
         shell: powershell
@@ -121,7 +125,7 @@ jobs:
           }
 
   publish-release:
-    if: startsWith(env.RELEASE_TAG, 'v')
+    if: ${{ startsWith(inputs.release_tag || github.ref_name, 'v') }}
     needs:
       - prepare-release
       - package-macos
