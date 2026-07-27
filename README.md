@@ -346,7 +346,7 @@ The repository includes three GitHub Actions workflows:
 
 - [.github/workflows/ci.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/ci.yml) runs the main lint, typecheck, and test suite on Ubuntu and a Windows desktop import smoke test on `windows-latest`.
 - [.github/workflows/create-release.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/create-release.yml) is a manual release-tag workflow. It validates the requested version, confirms it matches [pyproject.toml](/Users/damon/gitlab/nebulamaster/pyproject.toml), and pushes the version tag to GitHub.
-- [.github/workflows/package-desktop.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/package-desktop.yml) builds standalone desktop artifacts on macOS and Windows on demand and on version tags.
+- [.github/workflows/package-desktop.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/package-desktop.yml) builds standalone desktop artifacts on macOS and Windows on demand and on immutable semver release tags.
 
 Release flow:
 
@@ -355,7 +355,9 @@ Release flow:
 3. Enter a version tag such as `v0.2.0` and choose the target ref, usually `main`.
 4. The workflow confirms the tag matches the repo version, then creates and pushes the annotated tag.
 5. The same workflow then starts `Package Desktop` explicitly for that tag, which avoids GitHub's suppressed follow-on workflow behavior for `GITHUB_TOKEN` tag pushes.
-6. `Package Desktop` builds the macOS and Windows desktop artifacts.
-7. `Package Desktop` uploads the macOS `.zip` and `.dmg` files plus the Windows `.zip` and installer `.exe` files to the matching GitHub Release.
+6. `Package Desktop` creates a draft release, uploads the macOS and Windows assets to that draft, and only then publishes the immutable release.
+7. After publish, `Package Desktop` updates the movable major tag, for example `v0`, to the released commit.
+
+This gives Nebula Master both immutable versioned releases such as `v0.2.1` and a movable convenience tag such as `v0`.
 
 For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.

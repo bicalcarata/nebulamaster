@@ -9,7 +9,7 @@ on:
         type: string
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
 
 permissions:
   contents: write
@@ -18,7 +18,21 @@ env:
   RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
+  prepare-release:
+    if: startsWith(env.RELEASE_TAG, 'v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create or reuse draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+          gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --generate-notes --draft
+
   package-macos:
+    needs: prepare-release
+    if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: macos-latest
 
     steps:
@@ -48,13 +62,11 @@ jobs:
             dist/NebulaMaster.app.zip
             dist/NebulaMaster.dmg
 
-      - name: Create or update GitHub release
+      - name: Upload macOS assets to draft release
         if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
-          gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --generate-notes
           files=("dist/NebulaMaster.app.zip")
           if [[ -f "dist/NebulaMaster.dmg" ]]; then
             files+=("dist/NebulaMaster.dmg")
@@ -62,6 +74,8 @@ jobs:
           gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
 
   package-windows:
+    needs: prepare-release
+    if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: windows-latest
 
     steps:
@@ -95,17 +109,44 @@ jobs:
             dist/NebulaMaster-windows.zip
             dist/NebulaMaster-Setup.exe
 
-      - name: Upload Windows release asset
+      - name: Upload Windows assets to draft release
         if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          gh release view "${env:RELEASE_TAG}" *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create "${env:RELEASE_TAG}" --title "${env:RELEASE_TAG}" --generate-notes
-          }
           gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-windows.zip" --clobber
           if (Test-Path "dist/NebulaMaster-Setup.exe") {
             gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-Setup.exe" --clobber
           }
+
+  publish-release:
+    if: startsWith(env.RELEASE_TAG, 'v')
+    needs:
+      - prepare-release
+      - package-macos
+      - package-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${RELEASE_TAG}" --draft=false --latest
+
+      - name: Update movable major tag
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          major_tag="$(printf '%s\n' "${RELEASE_TAG}" | cut -d. -f1)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "${major_tag}" -m "Latest ${major_tag} release ${RELEASE_TAG}"
+          git push origin "refs/tags/${major_tag}" --force
