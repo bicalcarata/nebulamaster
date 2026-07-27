@@ -353,6 +353,13 @@ The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/neb
 
 ## CI And Releases
 
+If you just want the current build without learning GitHub release mechanics, use these links:
+
+- Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
+- All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
+- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
+- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+
 The repository includes three GitHub Actions workflows:
 
 - [.github/workflows/ci.yml](/Users/damon/gitlab/nebulamaster/.github/workflows/ci.yml) runs the main lint, typecheck, and test suite on Ubuntu and a Windows desktop import smoke test on `windows-latest`.
