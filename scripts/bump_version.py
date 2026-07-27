@@ -44,7 +44,11 @@ def _replace_single(pattern: re.Pattern[str], content: str, new_version: str, pa
     match = pattern.search(content)
     if match is None:
         raise SystemExit(f"Could not find version declaration in {path}.")
-    return pattern.sub(lambda _: _.group(0).replace(match.group("version"), new_version), content, count=1)
+    return pattern.sub(
+        lambda _: _.group(0).replace(match.group("version"), new_version),
+        content,
+        count=1,
+    )
 
 
 def _update_file(path: Path, pattern: re.Pattern[str], new_version: str) -> None:
