@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: validate preview test lint typecheck container-build package-desktop
+.PHONY: validate preview test lint typecheck container-build package-desktop bump-version
 
 validate:
 	uv run nebula validate examples/valid/minimal-project
@@ -22,3 +22,7 @@ container-build:
 
 package-desktop:
 	./.venv/bin/python scripts/package_desktop.py
+
+bump-version:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version VERSION=0.2.0"; exit 1; fi
+	$(PYTHON) scripts/bump_version.py $(VERSION)

@@ -1,6 +1,6 @@
 [project]
 name = "nebula-renderer-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Renderer CLI for Nebula Master"
 requires-python = ">=3.13,<3.14"
 dependencies = [
