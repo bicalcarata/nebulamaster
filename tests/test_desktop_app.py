@@ -10,6 +10,7 @@ import yaml
 from engine import semantic_target_influence
 from engine.render import render_bundle_output
 from image_io import CanonicalImage, inspect_image, load_canonical_image
+from nebula_desktop import __version__ as desktop_version
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
     AboutDialog,
@@ -231,7 +232,7 @@ def test_about_menu_opens_about_dialog_with_version_and_links(
     assert isinstance(window._about_dialog, AboutDialog)
     assert window._about_dialog.windowTitle() == "About Nebula Master"
     html = window._about_dialog.browser.toHtml()
-    assert "0.4.2" in html
+    assert desktop_version in html
     assert "github.com/bicalcarata/nebulamaster/releases/latest" in html
     assert "discussions/categories/bugs" in html
     assert "discussions/categories/features" in html
