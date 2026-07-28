@@ -16,8 +16,8 @@ Your original image is never changed.
 
 - Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
 - All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
-- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
-- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+- Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
+- Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
 ## Why Nebula Master?
 
@@ -251,8 +251,8 @@ If you just want the current build without learning GitHub release mechanics, us
 
 - Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
 - All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
-- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
-- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+- Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
+- Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
 For a simple walkthrough, see [docs/nebula-master-get-started.pdf](/Users/damon/gitlab/nebulamaster/docs/nebula-master-get-started.pdf).
 
@@ -451,14 +451,14 @@ Artifacts are written to `dist/`.
 On macOS:
 
 - `dist/Nebula Master.app`
-- `dist/NebulaMaster.app.zip`
-- `dist/NebulaMaster.dmg`
+- `dist/NebulaMaster-MacOS.app.zip`
+- `dist/NebulaMaster-MacOS.dmg`
 
 On Windows:
 
 - `dist/Nebula Master/`
-- `dist/NebulaMaster-windows.zip`
-- `dist/NebulaMaster-Setup.exe` when Inno Setup is available
+- `dist/NebulaMaster-Windows.zip`
+- `dist/NebulaMaster-Windows-Setup.exe` when Inno Setup is available
 
 The packaging entrypoint is [scripts/package_desktop.py](/Users/damon/gitlab/nebulamaster/scripts/package_desktop.py), which:
 

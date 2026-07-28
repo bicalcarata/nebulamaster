@@ -61,17 +61,17 @@ jobs:
           name: nebula-desktop-macos
           path: |
             dist/Nebula Master.app
-            dist/NebulaMaster.app.zip
-            dist/NebulaMaster.dmg
+            dist/NebulaMaster-MacOS.app.zip
+            dist/NebulaMaster-MacOS.dmg
 
       - name: Upload macOS assets to draft release
         if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files=("dist/NebulaMaster.app.zip")
-          if [[ -f "dist/NebulaMaster.dmg" ]]; then
-            files+=("dist/NebulaMaster.dmg")
+          files=("dist/NebulaMaster-MacOS.app.zip")
+          if [[ -f "dist/NebulaMaster-MacOS.dmg" ]]; then
+            files+=("dist/NebulaMaster-MacOS.dmg")
           fi
           gh release upload "${RELEASE_TAG}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
 
@@ -110,8 +110,8 @@ jobs:
           name: nebula-desktop-windows
           path: |
             dist/Nebula Master
-            dist/NebulaMaster-windows.zip
-            dist/NebulaMaster-Setup.exe
+            dist/NebulaMaster-Windows.zip
+            dist/NebulaMaster-Windows-Setup.exe
 
       - name: Upload Windows assets to draft release
         if: startsWith(env.RELEASE_TAG, 'v')
@@ -120,9 +120,9 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-windows.zip" --repo "${env:GITHUB_REPOSITORY}" --clobber
-          if (Test-Path "dist/NebulaMaster-Setup.exe") {
-            gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-Setup.exe" --repo "${env:GITHUB_REPOSITORY}" --clobber
+          gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-Windows.zip" --repo "${env:GITHUB_REPOSITORY}" --clobber
+          if (Test-Path "dist/NebulaMaster-Windows-Setup.exe") {
+            gh release upload "${env:RELEASE_TAG}" "dist/NebulaMaster-Windows-Setup.exe" --repo "${env:GITHUB_REPOSITORY}" --clobber
           }
 
   publish-release:

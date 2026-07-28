@@ -20,8 +20,10 @@ ASSETS_DIR = ROOT_DIR / "apps" / "desktop" / "assets"
 ICON_PNG = ASSETS_DIR / "nebula-master-icon.png"
 ICON_ICNS = ASSETS_DIR / "nebula-master.icns"
 APP_NAME = "Nebula Master"
-WINDOWS_ZIP_NAME = "NebulaMaster-windows.zip"
-WINDOWS_INSTALLER_NAME = "NebulaMaster-Setup.exe"
+MACOS_ZIP_NAME = "NebulaMaster-MacOS.app.zip"
+MACOS_DMG_NAME = "NebulaMaster-MacOS.dmg"
+WINDOWS_ZIP_NAME = "NebulaMaster-Windows.zip"
+WINDOWS_INSTALLER_NAME = "NebulaMaster-Windows-Setup.exe"
 
 
 class PackagingError(RuntimeError):
@@ -149,8 +151,8 @@ def _build_windows_installer(app_dir: Path) -> Path | None:
 
 def _package_macos() -> list[Path]:
     app_bundle_path = DIST_DIR / f"{APP_NAME}.app"
-    zip_path = DIST_DIR / "NebulaMaster.app.zip"
-    dmg_path = DIST_DIR / "NebulaMaster.dmg"
+    zip_path = DIST_DIR / MACOS_ZIP_NAME
+    dmg_path = DIST_DIR / MACOS_DMG_NAME
     _clean_path(app_bundle_path)
     _clean_path(zip_path)
     _clean_path(dmg_path)
@@ -197,7 +199,7 @@ def _package_macos() -> list[Path]:
 
 def _package_windows() -> list[Path]:
     app_dir = DIST_DIR / APP_NAME
-    zip_base = DIST_DIR / "NebulaMaster-windows"
+    zip_base = DIST_DIR / WINDOWS_ZIP_NAME.removesuffix(".zip")
     zip_path = DIST_DIR / WINDOWS_ZIP_NAME
     _clean_path(app_dir)
     _clean_path(zip_path)
