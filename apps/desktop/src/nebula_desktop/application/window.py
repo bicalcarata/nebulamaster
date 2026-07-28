@@ -156,8 +156,8 @@ def _build_about_html() -> str:
     return (
         "<h1>Nebula Master</h1>"
         f"<p><strong>Version:</strong> {__version__}</p>"
-        "<p>Declarative, repeatable image mastering for Nebula and Dark Nebula "
-        "deep sky objects.</p>"
+        "<p>Beginner-friendly image mastering for nebula and dark-nebula images "
+        "produced by smart telescopes.</p>"
         "<p><strong>Repository:</strong> "
         '<a href="https://github.com/bicalcarata/nebulamaster">'
         "github.com/bicalcarata/nebulamaster</a></p>"
