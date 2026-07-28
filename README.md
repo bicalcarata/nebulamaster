@@ -12,6 +12,13 @@ Your original image is never changed.
 
 ![Nebula Master desktop preview](docs/images/readme/desktop-main.png)
 
+## Download
+
+- Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
+- All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
+- Latest macOS installer: [NebulaMaster.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster.dmg)
+- Latest Windows installer: [NebulaMaster-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Setup.exe)
+
 ## Why Nebula Master?
 
 ### Start with the image you already have
