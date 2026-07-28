@@ -147,7 +147,8 @@ def test_add_adjustment_button_stays_next_to_adjustments_label(
 
     button_geometry = window.add_adjustment_button.geometry()
     assert window.add_adjustment_button.isVisible() is True
-    assert button_geometry.left() < window.left_panel.width() // 2
+    assert button_geometry.top() < window.adjustments_list.geometry().top()
+    assert button_geometry.left() < window.adjustments_list.geometry().left() + 220
 
 
 def test_keep_change_button_stays_next_to_unsaved_changes_label(
