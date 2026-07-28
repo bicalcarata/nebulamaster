@@ -12,6 +12,7 @@ from engine.render import render_bundle_output
 from image_io import CanonicalImage, inspect_image, load_canonical_image
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
+    AboutDialog,
     MainWindow,
     _brightness_amount_to_ui,
 )
@@ -208,6 +209,32 @@ def test_help_button_opens_help_dialog(
     assert window._help_dialog.windowTitle() == "Nebula Master Help"
     assert window._help_dialog.isVisible() is True
     assert window._help_dialog.suppress_checkbox.isVisible() is False
+
+
+def test_about_menu_opens_about_dialog_with_version_and_links(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    MainWindow._startup_help_shown_this_session = False
+    monkeypatch.setattr(MainWindow, "_show_startup_help_enabled", lambda self: False)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window._show_about_dialog()
+    qtbot.waitUntil(lambda: window._about_dialog is not None, timeout=5000)
+
+    assert window._about_dialog is not None
+    assert isinstance(window._about_dialog, AboutDialog)
+    assert window._about_dialog.windowTitle() == "About Nebula Master"
+    html = window._about_dialog.browser.toHtml()
+    assert "0.4.2" in html
+    assert "github.com/bicalcarata/nebulamaster/releases/latest" in html
+    assert "discussions/categories/bugs" in html
+    assert "discussions/categories/features" in html
 
 
 def test_startup_help_can_be_suppressed_for_future_launches(

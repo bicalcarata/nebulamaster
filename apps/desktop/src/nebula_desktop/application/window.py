@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from nebula_desktop import __version__
 from nebula_desktop.application.assets import asset_path
 from nebula_desktop.application.export_dialogs import (
     PrintExportDialog,
@@ -151,6 +152,29 @@ def _load_help_document_html() -> str:
     )
 
 
+def _build_about_html() -> str:
+    return (
+        "<h1>Nebula Master</h1>"
+        f"<p><strong>Version:</strong> {__version__}</p>"
+        "<p>Declarative, repeatable image mastering for Nebula and Dark Nebula "
+        "deep sky objects.</p>"
+        "<p><strong>Repository:</strong> "
+        '<a href="https://github.com/bicalcarata/nebulamaster">'
+        "github.com/bicalcarata/nebulamaster</a></p>"
+        "<p><strong>Latest release:</strong> "
+        '<a href="https://github.com/bicalcarata/nebulamaster/releases/latest">'
+        "github.com/bicalcarata/nebulamaster/releases/latest</a></p>"
+        "<p>Written by reddit user <strong>r/bicalarata</strong>.<br>"
+        "Windows testing by <strong>r/mrrobinson7988</strong>.</p>"
+        "<p><strong>Bug reports:</strong> "
+        '<a href="https://github.com/bicalcarata/nebulamaster/discussions/categories/bugs">'
+        "github.com/bicalcarata/nebulamaster/discussions/categories/bugs</a></p>"
+        "<p><strong>Feature requests:</strong> "
+        '<a href="https://github.com/bicalcarata/nebulamaster/discussions/categories/features">'
+        "github.com/bicalcarata/nebulamaster/discussions/categories/features</a></p>"
+    )
+
+
 class HelpDialog(QDialog):
     startupPreferenceChanged = Signal(bool)
 
@@ -193,6 +217,29 @@ class HelpDialog(QDialog):
         super().done(result)
 
 
+class AboutDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("About Nebula Master")
+        self.resize(620, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        browser = QTextBrowser(self)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(_build_about_html())
+        self.browser = browser
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout.addWidget(browser, 1)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     _startup_help_shown_this_session = False
 
@@ -202,6 +249,7 @@ class MainWindow(QMainWindow):
         self._initial_size_applied = False
         self._startup_help_prompted = False
         self._help_dialog: HelpDialog | None = None
+        self._about_dialog: AboutDialog | None = None
         self._adjustment_render_timer = QTimer(self)
         self._adjustment_render_timer.setSingleShot(True)
         self._adjustment_render_timer.setInterval(300)
@@ -260,7 +308,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(export_print_action)
         help_action = QAction("Getting Started...", self)
         help_action.triggered.connect(self._show_help_dialog)
+        about_action = QAction("About Nebula Master", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(self._show_about_dialog)
         help_menu = self.menuBar().addMenu("Help")
+        help_menu.addAction(about_action)
         help_menu.addAction(help_action)
 
         root = QWidget(self)
@@ -982,6 +1034,14 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
         self._help_dialog = dialog
+
+    def _show_about_dialog(self, _checked: bool = False) -> None:
+        dialog = AboutDialog(self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._about_dialog = dialog
 
     def _open_project_dialog(self) -> None:
         selected, _filter = QFileDialog.getOpenFileName(

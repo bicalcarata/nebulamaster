@@ -1,6 +1,6 @@
 [project]
 name = "nebula-project-io"
-version = "0.4.2"
+version = "0.4.3"
 description = "YAML loading and filesystem resolution for Nebula Master projects"
 requires-python = ">=3.13,<3.14"
 dependencies = [
