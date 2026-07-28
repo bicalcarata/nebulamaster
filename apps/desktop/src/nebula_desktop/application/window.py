@@ -164,8 +164,8 @@ def _build_about_html() -> str:
         "<p><strong>Latest release:</strong> "
         '<a href="https://github.com/bicalcarata/nebulamaster/releases/latest">'
         "github.com/bicalcarata/nebulamaster/releases/latest</a></p>"
-        "<p>Written by reddit user <strong>r/bicalarata</strong>.<br>"
-        "Windows testing by <strong>r/mrrobinson7988</strong>.</p>"
+        "<p>Written by reddit user <strong>u/bicalarata</strong>.<br>"
+        "Windows testing by <strong>u/mrrobinson7988</strong>.</p>"
         "<p><strong>Bug reports:</strong> "
         '<a href="https://github.com/bicalcarata/nebulamaster/discussions/categories/bugs">'
         "github.com/bicalcarata/nebulamaster/discussions/categories/bugs</a></p>"
