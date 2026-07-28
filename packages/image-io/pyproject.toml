@@ -1,6 +1,6 @@
 [project]
 name = "nebula-image-io"
-version = "0.4.1"
+version = "0.4.2"
 description = "Image metadata and loading helpers for Nebula Master"
 requires-python = ">=3.13,<3.14"
 dependencies = [

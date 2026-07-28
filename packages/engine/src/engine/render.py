@@ -114,7 +114,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.4.1"
+        return "0.4.2"
 
 
 def _enabled_sources(bundle: ProjectBundle) -> list[SourceImage]:

@@ -785,20 +785,31 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 12, 16, 16)
         layout.setSpacing(10)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         title = QLabel("Unsaved Changes")
         title.setStyleSheet("font-weight: 600;")
+        self.save_button = QPushButton("Keep Change")
+        self.save_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.save_button.setMinimumWidth(108)
+        header.addWidget(title)
+        header.addWidget(self.save_button)
+        header.addStretch(1)
+
         self.changes_list = QListWidget()
         self.changes_list.setMaximumHeight(120)
         _allow_panel_horizontal_shrink(self.changes_list)
         self.revert_change_button = QPushButton("Remove Selected Change")
         self.what_changed_button = QPushButton("What Changed?")
         self.revert_all_button = QPushButton("Revert All")
-        self.save_button = QPushButton("Keep Change")
         for widget in [
             self.revert_change_button,
             self.what_changed_button,
             self.revert_all_button,
-            self.save_button,
         ]:
             _allow_horizontal_shrink(widget)
         actions = QHBoxLayout()
@@ -806,9 +817,8 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.what_changed_button)
         actions.addWidget(self.revert_all_button)
         actions.addStretch(1)
-        actions.addWidget(self.save_button)
 
-        layout.addWidget(title)
+        layout.addLayout(header)
         layout.addWidget(self.changes_list)
         layout.addLayout(actions)
         return panel
