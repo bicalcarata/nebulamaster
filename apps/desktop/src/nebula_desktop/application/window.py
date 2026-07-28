@@ -330,11 +330,16 @@ class MainWindow(QMainWindow):
         adjustment_title = QLabel("Adjustments")
         adjustment_title.setStyleSheet("font-weight: 600;")
         self.add_adjustment_button = QPushButton("Add")
+        self.add_adjustment_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.add_adjustment_button.setMinimumWidth(52)
         self.move_earlier_button = QPushButton("Move Earlier")
         self.move_later_button = QPushButton("Move Later")
         adjustment_header.addWidget(adjustment_title)
-        adjustment_header.addStretch(1)
         adjustment_header.addWidget(self.add_adjustment_button)
+        adjustment_header.addStretch(1)
 
         self.adjustments_list = QListWidget()
         _allow_panel_horizontal_shrink(self.adjustments_list)
@@ -370,7 +375,6 @@ class MainWindow(QMainWindow):
         for widget in [
             self.project_name_label,
             self.project_path_label,
-            self.add_adjustment_button,
             self.move_earlier_button,
             self.move_later_button,
             self.duplicate_adjustment_button,

@@ -135,6 +135,21 @@ def test_main_window_uses_resizable_three_panel_splitter_and_fullscreen_launch(
     assert window.reset_adjustment_button.text() == ""
 
 
+def test_add_adjustment_button_stays_next_to_adjustments_label(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    button_geometry = window.add_adjustment_button.geometry()
+    assert window.add_adjustment_button.isVisible() is True
+    assert button_geometry.left() < window.left_panel.width() // 2
+
+
 def test_open_project_dialog_accepts_project_yaml(
     monkeypatch: Any,
     qtbot: Any,

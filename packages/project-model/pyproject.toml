@@ -1,6 +1,6 @@
 [project]
 name = "nebula-project-model"
-version = "0.4.0"
+version = "0.4.1"
 description = "Strict project models for Nebula Master"
 requires-python = ">=3.13,<3.14"
 dependencies = [
