@@ -13,6 +13,8 @@ from nebula_desktop.application.window import MainWindow
 
 def main(project_path: str | None = None) -> int:
     app = cast(QApplication | None, QApplication.instance()) or QApplication(sys.argv)
+    app.setOrganizationName("NebulaMaster")
+    app.setApplicationName("Desktop")
     icon_file = asset_path("nebula-master-icon.png")
     if icon_file.is_file():
         app.setWindowIcon(QIcon(str(icon_file)))

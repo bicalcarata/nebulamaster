@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nebula Master Help</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+        color: #e5e7eb;
+        background: #111827;
+        margin: 0;
+        padding: 28px 32px 36px;
+      }
+      h1, h2 {
+        color: #f8fafc;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 28px;
+      }
+      h2 {
+        margin-top: 28px;
+        font-size: 20px;
+      }
+      p, li {
+        font-size: 15px;
+      }
+      ul, ol {
+        padding-left: 24px;
+      }
+      code {
+        background: rgba(148, 163, 184, 0.16);
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      .note {
+        background: rgba(37, 99, 235, 0.12);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: 10px;
+        padding: 12px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Nebula Master Desktop Help</h1>
+    <p>
+      Nebula Master is a declarative image mastering tool. You work from an
+      immutable source image, create ordered adjustments, preview the result,
+      and export renders when you are ready.
+    </p>
+
+    <h2>Quick Start</h2>
+    <ol>
+      <li>Choose <code>File → New Project from Image…</code>.</li>
+      <li>Select a TIFF, PNG, JPEG, or TIFF source image.</li>
+      <li>Choose the parent folder where Nebula Master should create the project.</li>
+      <li>Enter a project folder name when prompted.</li>
+      <li>Nebula Master copies the source image into the new project and opens it.</li>
+    </ol>
+
+    <div class="note">
+      Nebula Master creates a project folder for you. The source image becomes
+      part of that project, and later preview and export files can be recreated
+      at any time.
+    </div>
+
+    <h2>Open an Existing Project</h2>
+    <ol>
+      <li>Choose <code>File → Open Project…</code>.</li>
+      <li>Select the project’s <code>project.yaml</code> file.</li>
+      <li>The project, its adjustments, regions, and preview state will load.</li>
+    </ol>
+
+    <h2>Add and Edit Adjustments</h2>
+    <ol>
+      <li>Click <code>Add</code> in the Adjustments panel.</li>
+      <li>Choose the adjustment type you want to add.</li>
+      <li>Select the new adjustment in the list.</li>
+      <li>Use the right-hand inspector to change its settings.</li>
+      <li>Use <code>Affects</code> to target Combined Image, Nebula, Stars, or Dark Dust.</li>
+      <li>Use <code>Apply in</code> to keep the adjustment global or assign it to one or more regions.</li>
+    </ol>
+
+    <h2>Create an Adjustment from the Image</h2>
+    <ol>
+      <li>Click <code>Create Adjustment from Selection</code>.</li>
+      <li>Click a visible feature in the preview.</li>
+      <li>Choose the adjustment type from the prompt.</li>
+      <li>Nebula Master creates a normal adjustment at the end of the stack.</li>
+    </ol>
+
+    <h2>Regions</h2>
+    <ol>
+      <li>Click <code>Add Region</code>.</li>
+      <li>Click points in the preview to draw the polygon.</li>
+      <li>Finish the region and then select it from the Regions list.</li>
+      <li>Adjust edge softness if you want a feathered transition.</li>
+      <li>Assign adjustments to that region from the inspector.</li>
+    </ol>
+
+    <h2>Preview Controls</h2>
+    <ul>
+      <li><code>Show Preview</code> displays the current mastered result.</li>
+      <li><code>Show Source</code> displays the source image.</li>
+      <li><code>Overlay</code> shows semantic masks such as Stars, Nebula, or Dark Dust.</li>
+      <li><code>Before / After</code> and <code>Hold Previous</code> help compare working changes.</li>
+      <li><code>Fit</code>, <code>100%</code>, <code>−</code>, and <code>+</code> control zoom.</li>
+    </ul>
+
+    <h2>Save Working Changes</h2>
+    <p>
+      The bottom panel lists unsaved semantic changes. Click
+      <code>Keep Change</code> to write the edited project metadata back to disk.
+      This saves the project state, not a rendered image file.
+    </p>
+
+    <h2>Export an Image</h2>
+    <ol>
+      <li>Choose <code>File → Export for Screen…</code> or <code>File → Export for Print…</code>.</li>
+      <li>Select the output format and size.</li>
+      <li>Choose the destination path.</li>
+      <li>Nebula Master renders the current adjustment stack to that output.</li>
+    </ol>
+
+    <h2>Project Model</h2>
+    <ul>
+      <li>The project file is the source of truth.</li>
+      <li>Source images are immutable inputs.</li>
+      <li>Preview and export files are disposable render artefacts.</li>
+      <li>Adjustment order matters and remains editable.</li>
+    </ul>
+
+    <h2>Tips</h2>
+    <ul>
+      <li>Start with broad adjustments, then add targeted regional refinements.</li>
+      <li>Use semantic overlays to understand what Nebula Master is targeting.</li>
+      <li>If a result looks wrong, check the adjustment order and the selected target.</li>
+      <li>Use the Help button at any time to reopen this guide.</li>
+    </ul>
+  </body>
+</html>

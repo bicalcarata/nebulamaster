@@ -1256,6 +1256,12 @@ class ProjectEditorViewModel(QObject):
         self._working_documents.bundle.project.dark_dust.softness = max(0.0, min(1.0, value))
         self._after_metadata_change(render=True)
 
+    def reset_dark_dust_settings(self) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust = DarkDustSettings()
+        self._after_metadata_change(render=True)
+
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:
         rule = self._selected_rule_model()
         if rule is None:

@@ -93,6 +93,48 @@ def test_desktop_opens_valid_project_headless(qtbot: Any, tmp_path: Path) -> Non
     assert window.view_model.current_display_image() is not None
 
 
+def test_main_window_uses_resizable_three_panel_splitter_and_fullscreen_launch(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+    qtbot.waitUntil(lambda: window._initial_size_applied is True, timeout=5000)
+
+    assert window.main_splitter.count() == 3
+    assert window.main_splitter.childrenCollapsible() is False
+    assert window.main_splitter.handleWidth() == 10
+    ignored = window.left_panel.sizePolicy().Policy.Ignored
+    assert window.left_panel.sizePolicy().horizontalPolicy() == ignored
+    assert window.center_panel.sizePolicy().horizontalPolicy() == ignored
+    assert window.right_panel.sizePolicy().horizontalPolicy() == ignored
+    assert window.left_panel.minimumWidth() == 220
+    assert window.center_panel.minimumWidth() == 560
+    assert window.right_panel.minimumWidth() == 320
+    screen = window.screen() or QApplication.primaryScreen()
+    assert screen is not None
+    available = screen.availableGeometry()
+    normal_geometry = window.normalGeometry()
+    assert normal_geometry.width() >= min(1100, available.width())
+    assert normal_geometry.height() >= min(760, available.height())
+    sizes = window.main_splitter.sizes()
+    assert len(sizes) == 3
+    assert sizes[0] > 0
+    assert sizes[1] >= sizes[0]
+    assert sizes[2] > 0
+    assert window.show_preview_button.width() > 0
+    assert window.semantic_overlay_selector.width() >= 180
+    assert window.pick_button.width() >= 150
+    assert window.move_earlier_button.text() == ""
+    assert window.move_later_button.text() == ""
+    assert window.duplicate_adjustment_button.text() == ""
+    assert window.remove_adjustment_button.text() == ""
+    assert window.reset_adjustment_button.text() == ""
+
+
 def test_open_project_dialog_accepts_project_yaml(
     monkeypatch: Any,
     qtbot: Any,
@@ -113,6 +155,61 @@ def test_open_project_dialog_accepts_project_yaml(
     qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
 
     assert window.project_name_label.text() == "Horsehead Demo"
+
+
+def test_help_button_opens_help_dialog(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    MainWindow._startup_help_shown_this_session = False
+    monkeypatch.setattr(MainWindow, "_show_startup_help_enabled", lambda self: False)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.help_button.click()
+    qtbot.waitUntil(lambda: window._help_dialog is not None, timeout=5000)
+    assert window._help_dialog is not None
+    assert window._help_dialog.windowTitle() == "Nebula Master Help"
+    assert window._help_dialog.isVisible() is True
+    assert window._help_dialog.suppress_checkbox.isVisible() is False
+
+
+def test_startup_help_can_be_suppressed_for_future_launches(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    MainWindow._startup_help_shown_this_session = False
+    persisted: list[bool] = []
+    monkeypatch.setattr(MainWindow, "_show_startup_help_enabled", lambda self: True)
+    monkeypatch.setattr(
+        MainWindow,
+        "_set_show_startup_help_enabled",
+        lambda self, enabled: persisted.append(enabled),
+    )
+
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window._help_dialog is not None, timeout=5000)
+    assert window._help_dialog is not None
+    assert window._help_dialog.suppress_checkbox.isVisible() is True
+
+    window._help_dialog.suppress_checkbox.setChecked(True)
+    window._help_dialog.close()
+    qtbot.waitUntil(lambda: persisted == [False], timeout=5000)
+
+    second = MainWindow(project_dir)
+    qtbot.addWidget(second)
+    second.show()
+    qtbot.waitUntil(lambda: second.view_model._current_preview is not None, timeout=5000)
+    qtbot.wait(150)
+    assert second._help_dialog is None
 
 
 def test_scaffold_project_from_tiff_creates_valid_project(tmp_path: Path) -> None:
@@ -224,6 +321,91 @@ def test_first_adjustment_switches_editor_from_region_to_adjustment(
     summary = window.view_model.selected_adjustment_summary()
     assert summary is not None
     assert summary.type_label == "Red"
+    assert window.panel_heading.text() == "Adjustment: Red"
+
+
+def test_right_inspector_uses_scrollable_adjustment_and_dark_dust_sections(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.right_scroll_area.widget() is not None
+    assert window.adjustment_section.objectName() == "inspectorSection"
+    assert window.dark_dust_group.objectName() == "inspectorSection"
+    assert window.panel_heading.text().startswith("Adjustment: ")
+
+
+def test_adjustment_helper_labels_use_shared_wrapped_layout(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.adjustment_helper_label.wordWrap() is True
+    assert window.region_helper_label.wordWrap() is True
+    assert window.region_reference_label.wordWrap() is True
+    assert window.adjustment_helper_label.minimumWidth() == 0
+    assert window.region_helper_label.minimumWidth() == 0
+
+
+def test_dark_dust_panel_has_dedicated_reset_action(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.dark_dust_sensitivity_input.setValue(0.71)
+    window.dark_dust_structure_size_input.setValue(0.13)
+    window.dark_dust_background_protection_input.setValue(0.24)
+    window.dark_dust_softness_input.setValue(0.29)
+
+    window.reset_dark_dust_button.click()
+
+    settings = window.view_model.dark_dust_settings()
+    assert settings.sensitivity == 0.58
+    assert settings.structure_size == 0.09
+    assert settings.background_protection == 0.30
+    assert settings.softness == 0.22
+
+
+def test_dark_dust_panel_can_be_collapsed_and_expanded(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.dark_dust_title_label.text() == "Dark Dust Mask"
+    assert window.dark_dust_toggle_button.isVisible() is True
+    assert window.dark_dust_body.isVisible() is True
+    assert window.dark_dust_toggle_button.text() == "▾"
+
+    window.dark_dust_toggle_button.click()
+
+    assert window.dark_dust_body.isVisible() is False
+    assert window.dark_dust_toggle_button.text() == "▸"
+    assert window.dark_dust_title_label.text() == "Dark Dust Mask"
+
+    window.dark_dust_toggle_button.click()
+
+    assert window.dark_dust_body.isVisible() is True
+    assert window.dark_dust_toggle_button.text() == "▾"
 
 
 def test_invalid_project_raises_readable_error(qtbot: Any, tmp_path: Path) -> None:
@@ -328,6 +510,31 @@ def test_adjustment_editor_updates_pick_button_label_for_selected_rule(
     assert window.primary_input.maximum() == 100.0
     assert window.primary_slider.minimum() == -100
     assert window.primary_slider.maximum() == 100
+
+
+def test_overlay_dark_dust_reveals_edit_dark_dust_action(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    assert window.edit_dark_dust_button.isVisible() is False
+
+    dark_dust_index = window.semantic_overlay_selector.findData("dark_dust")
+    assert dark_dust_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(dark_dust_index)
+
+    assert window.edit_dark_dust_button.isVisible() is True
+
+    off_index = window.semantic_overlay_selector.findData("off")
+    assert off_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(off_index)
+
+    assert window.edit_dark_dust_button.isVisible() is False
 
 
 def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path: Path) -> None:

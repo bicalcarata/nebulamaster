@@ -4,14 +4,16 @@ from pathlib import Path
 from typing import cast
 
 from project_model import PrintRenderProfile, ScreenRenderProfile
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap, QShowEvent
+from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -22,16 +24,20 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QStyle,
+    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from nebula_desktop.application.assets import asset_path
 from nebula_desktop.application.export_dialogs import (
     PrintExportDialog,
     ScreenExportDialog,
@@ -63,7 +69,26 @@ def _swatch_pixmap(rgb: tuple[float, float, float], size: int = 20) -> QPixmap:
 
 def _allow_horizontal_shrink(widget: QWidget) -> None:
     widget.setMinimumWidth(0)
+    widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+
+def _allow_panel_horizontal_shrink(widget: QWidget) -> None:
+    widget.setMinimumWidth(0)
+    widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+
+def _allow_toolbar_control(widget: QWidget) -> None:
+    widget.setMinimumWidth(0)
     widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+
+def _build_muted_wrapped_label(text: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setMinimumWidth(0)
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+    label.setStyleSheet("color: #7b8794;")
+    return label
 
 
 _MULTIPLIER_UI_MIN = -100.0
@@ -74,6 +99,28 @@ _SMOOTHING_UI_MIN = 0.0
 _SMOOTHING_UI_MAX = 100.0
 _PALETTE_UI_MIN = 0.0
 _PALETTE_UI_MAX = 100.0
+_HELP_SHOW_ON_STARTUP_KEY = "ui/show_help_on_startup"
+_LEFT_PANEL_MIN_WIDTH = 220
+_CENTER_PANEL_MIN_WIDTH = 560
+_RIGHT_PANEL_MIN_WIDTH = 320
+
+
+def _tinted_standard_icon(
+    style: QStyle,
+    standard_pixmap: QStyle.StandardPixmap,
+    *,
+    color: QColor,
+    size: int = 16,
+) -> QIcon:
+    base = style.standardIcon(standard_pixmap).pixmap(size, size)
+    tinted = QPixmap(base.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, base)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), color)
+    painter.end()
+    return QIcon(tinted)
 
 
 def _brightness_amount_to_ui(amount: float) -> float:
@@ -94,11 +141,67 @@ def _primary_slider_bounds(transform_type: str, type_label: str) -> tuple[int, i
     return int(_MULTIPLIER_UI_MIN), int(_MULTIPLIER_UI_MAX)
 
 
+def _load_help_document_html() -> str:
+    document_path = asset_path("desktop-help.html")
+    if document_path.is_file():
+        return document_path.read_text(encoding="utf-8")
+    return (
+        "<h1>Nebula Master Help</h1>"
+        "<p>The help document could not be loaded from the application bundle.</p>"
+    )
+
+
+class HelpDialog(QDialog):
+    startupPreferenceChanged = Signal(bool)
+
+    def __init__(self, parent: QWidget | None = None, *, allow_suppress: bool) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Nebula Master Help")
+        self.resize(860, 680)
+        self._startup_preference_emitted = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        browser = QTextBrowser(self)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(_load_help_document_html())
+
+        self.suppress_checkbox = QCheckBox("Do not display this window again", self)
+        self.suppress_checkbox.setVisible(allow_suppress)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout.addWidget(browser, 1)
+        layout.addWidget(self.suppress_checkbox)
+        layout.addWidget(buttons)
+
+    def suppress_startup_help(self) -> bool:
+        return self.suppress_checkbox.isVisible() and self.suppress_checkbox.isChecked()
+
+    def _emit_startup_preference_if_needed(self) -> None:
+        if self._startup_preference_emitted or not self.suppress_checkbox.isVisible():
+            return
+        self._startup_preference_emitted = True
+        self.startupPreferenceChanged.emit(not self.suppress_startup_help())
+
+    def done(self, result: int) -> None:
+        self._emit_startup_preference_if_needed()
+        super().done(result)
+
+
 class MainWindow(QMainWindow):
+    _startup_help_shown_this_session = False
+
     def __init__(self, project_path: Path | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Nebula Master Desktop")
         self._initial_size_applied = False
+        self._startup_help_prompted = False
+        self._help_dialog: HelpDialog | None = None
         self._adjustment_render_timer = QTimer(self)
         self._adjustment_render_timer.setSingleShot(True)
         self._adjustment_render_timer.setInterval(300)
@@ -115,19 +218,30 @@ class MainWindow(QMainWindow):
             return
         self._apply_initial_window_size()
         self._initial_size_applied = True
+        QTimer.singleShot(0, self._maybe_show_startup_help)
 
     def _apply_initial_window_size(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
-        if screen is None:
-            self.resize(1200, 820)
-            return
+        if screen is not None:
+            available = screen.availableGeometry()
+            target_width = min(1500, max(1100, int(available.width() * 0.82)))
+            target_height = min(960, max(760, int(available.height() * 0.82)))
+            width = min(target_width, available.width())
+            height = min(target_height, available.height())
+            x = available.x() + max(0, (available.width() - width) // 2)
+            y = available.y() + max(0, (available.height() - height) // 2)
+            self.setGeometry(x, y, width, height)
+            self._apply_initial_splitter_sizes(width)
+        else:
+            self.resize(1280, 820)
+            self._apply_initial_splitter_sizes(1280)
+        self.showFullScreen()
 
-        available = screen.availableGeometry()
-        target_width = min(1500, max(960, int(available.width() * 0.92)))
-        target_height = min(960, max(700, int(available.height() * 0.88)))
-        width = min(target_width, available.width())
-        height = min(target_height, available.height())
-        self.resize(width, height)
+    def _apply_initial_splitter_sizes(self, width: int) -> None:
+        left = max(_LEFT_PANEL_MIN_WIDTH, min(340, int(width * 0.22)))
+        right = max(_RIGHT_PANEL_MIN_WIDTH, min(420, int(width * 0.24)))
+        center = max(_CENTER_PANEL_MIN_WIDTH, width - left - right)
+        self.main_splitter.setSizes([left, center, right])
 
     def _build_ui(self) -> None:
         new_project_action = QAction("New Project from Image...", self)
@@ -144,21 +258,33 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(export_screen_action)
         file_menu.addAction(export_print_action)
+        help_action = QAction("Getting Started...", self)
+        help_action.triggered.connect(self._show_help_dialog)
+        help_menu = self.menuBar().addMenu("Help")
+        help_menu.addAction(help_action)
 
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal, root)
-        splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_center_panel())
-        splitter.addWidget(self._build_right_panel())
-        splitter.setChildrenCollapsible(False)
-        splitter.setSizes([320, 860, 360])
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal, root)
+        self.left_panel = self._build_left_panel()
+        self.center_panel = self._build_center_panel()
+        self.right_panel = self._build_right_panel()
+        self.main_splitter.addWidget(self.left_panel)
+        self.main_splitter.addWidget(self.center_panel)
+        self.main_splitter.addWidget(self.right_panel)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setOpaqueResize(True)
+        self.main_splitter.setHandleWidth(10)
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 3)
+        self.main_splitter.setStretchFactor(2, 1)
+        self._apply_initial_splitter_sizes(1500)
 
         bottom_panel = self._build_bottom_panel()
-        root_layout.addWidget(splitter, 1)
+        root_layout.addWidget(self.main_splitter, 1)
         root_layout.addWidget(bottom_panel, 0)
         root_layout.setStretch(0, 5)
         root_layout.setStretch(1, 1)
@@ -173,13 +299,22 @@ class MainWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget(self)
-        panel.setMinimumWidth(0)
+        _allow_panel_horizontal_shrink(panel)
+        panel.setMinimumWidth(_LEFT_PANEL_MIN_WIDTH)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         title = QLabel("Project")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self.help_button = QPushButton("Help")
+        _allow_horizontal_shrink(self.help_button)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.help_button)
         self.project_name_label = QLabel("No project open")
         self.project_path_label = QLabel("")
         self.project_path_label.setWordWrap(True)
@@ -189,6 +324,7 @@ class MainWindow(QMainWindow):
         source_title.setStyleSheet("font-weight: 600;")
         self.sources_list = QListWidget()
         self.sources_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        _allow_panel_horizontal_shrink(self.sources_list)
 
         adjustment_header = QHBoxLayout()
         adjustment_title = QLabel("Adjustments")
@@ -201,6 +337,7 @@ class MainWindow(QMainWindow):
         adjustment_header.addWidget(self.add_adjustment_button)
 
         self.adjustments_list = QListWidget()
+        _allow_panel_horizontal_shrink(self.adjustments_list)
         self.duplicate_adjustment_button = QPushButton("Duplicate")
         self.remove_adjustment_button = QPushButton("Remove")
         self.reset_adjustment_button = QPushButton("Reset")
@@ -225,9 +362,27 @@ class MainWindow(QMainWindow):
         region_header.addWidget(self.cancel_region_button)
 
         self.regions_list = QListWidget()
+        _allow_panel_horizontal_shrink(self.regions_list)
         self.remove_region_button = QPushButton("Delete Region")
 
-        layout.addWidget(title)
+        self._configure_left_panel_action_icons()
+
+        for widget in [
+            self.project_name_label,
+            self.project_path_label,
+            self.add_adjustment_button,
+            self.move_earlier_button,
+            self.move_later_button,
+            self.duplicate_adjustment_button,
+            self.remove_adjustment_button,
+            self.reset_adjustment_button,
+            self.add_region_button,
+            self.cancel_region_button,
+            self.remove_region_button,
+        ]:
+            _allow_horizontal_shrink(widget)
+
+        layout.addLayout(header)
         layout.addWidget(self.project_name_label)
         layout.addWidget(self.project_path_label)
         layout.addWidget(source_title)
@@ -242,20 +397,26 @@ class MainWindow(QMainWindow):
 
     def _build_center_panel(self) -> QWidget:
         panel = QWidget(self)
-        panel.setMinimumWidth(0)
+        _allow_panel_horizontal_shrink(panel)
+        panel.setMinimumWidth(_CENTER_PANEL_MIN_WIDTH)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        toolbar = QVBoxLayout()
+        toolbar_panel = QWidget(panel)
+        toolbar_panel.setMinimumWidth(0)
+        toolbar_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar = QVBoxLayout(toolbar_panel)
+        toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(6)
-        toolbar_row_primary = QHBoxLayout()
-        toolbar_row_primary.setSpacing(6)
         toolbar_row_view = QHBoxLayout()
+        toolbar_row_view.setContentsMargins(0, 0, 0, 0)
         toolbar_row_view.setSpacing(6)
-        toolbar_row_zoom = QHBoxLayout()
-        toolbar_row_zoom.setSpacing(6)
+        toolbar_row_compare = QHBoxLayout()
+        toolbar_row_compare.setContentsMargins(0, 0, 0, 0)
+        toolbar_row_compare.setSpacing(6)
         toolbar_row_secondary = QHBoxLayout()
+        toolbar_row_secondary.setContentsMargins(0, 0, 0, 0)
         toolbar_row_secondary.setSpacing(6)
         self.show_preview_button = QToolButton()
         self.show_preview_button.setText("Show Preview")
@@ -269,6 +430,9 @@ class MainWindow(QMainWindow):
         self.semantic_overlay_selector.addItem("Overlay: Stars", "stars")
         self.semantic_overlay_selector.addItem("Overlay: Nebula", "nebula")
         self.semantic_overlay_selector.addItem("Overlay: Dark Dust", "dark_dust")
+        self.edit_dark_dust_button = QToolButton()
+        self.edit_dark_dust_button.setText("Edit Dark Dust")
+        self.edit_dark_dust_button.setVisible(False)
         self.before_after_checkbox = QCheckBox("Before / After")
         self.hold_previous_button = QPushButton("Hold Previous")
         self.fit_button = QPushButton("Fit")
@@ -285,34 +449,37 @@ class MainWindow(QMainWindow):
             self.show_preview_button,
             self.show_source_button,
             self.semantic_overlay_selector,
-            self.before_after_checkbox,
-            self.hold_previous_button,
+            self.edit_dark_dust_button,
         ]:
-            _allow_horizontal_shrink(widget)
+            _allow_toolbar_control(widget)
             toolbar_row_view.addWidget(widget)
         toolbar_row_view.addStretch(1)
 
         for widget in [
+            self.before_after_checkbox,
+            self.hold_previous_button,
             self.fit_button,
             self.actual_button,
             self.zoom_out_button,
             self.zoom_in_button,
         ]:
-            _allow_horizontal_shrink(widget)
-            toolbar_row_zoom.addWidget(widget)
-        toolbar_row_zoom.addStretch(1)
-
-        toolbar_row_primary.addLayout(toolbar_row_view, 1)
-        toolbar_row_primary.addLayout(toolbar_row_zoom, 0)
+            _allow_toolbar_control(widget)
+            toolbar_row_compare.addWidget(widget)
+        toolbar_row_compare.addStretch(1)
 
         for widget in [
             self.pick_button,
             self.create_from_selection_button,
             self.cancel_selection_button,
         ]:
-            _allow_horizontal_shrink(widget)
+            _allow_toolbar_control(widget)
             toolbar_row_secondary.addWidget(widget)
         toolbar_row_secondary.addStretch(1)
+
+        self.semantic_overlay_selector.setMinimumWidth(180)
+        self.hold_previous_button.setMinimumWidth(130)
+        self.pick_button.setMinimumWidth(150)
+        self.create_from_selection_button.setMinimumWidth(250)
 
         self.preview_widget = ImagePreviewWidget(self)
         self.preview_widget.setMinimumSize(0, 480)
@@ -320,38 +487,76 @@ class MainWindow(QMainWindow):
         self.rendering_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.rendering_label.setStyleSheet("color: #9fb3c8;")
 
-        toolbar.addLayout(toolbar_row_primary)
+        toolbar.addLayout(toolbar_row_view)
+        toolbar.addLayout(toolbar_row_compare)
         toolbar.addLayout(toolbar_row_secondary)
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_panel)
         layout.addWidget(self.preview_widget, 1)
         layout.addWidget(self.rendering_label)
         return panel
 
     def _build_right_panel(self) -> QWidget:
         panel = QWidget(self)
-        panel.setMinimumWidth(0)
+        _allow_panel_horizontal_shrink(panel)
+        panel.setMinimumWidth(_RIGHT_PANEL_MIN_WIDTH)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(0)
+
+        self.right_scroll_area = QScrollArea(self)
+        self.right_scroll_area.setWidgetResizable(True)
+        self.right_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.right_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        _allow_panel_horizontal_shrink(self.right_scroll_area)
+
+        content = QWidget(self.right_scroll_area)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+
+        self.adjustment_section = self._build_adjustment_section()
+        self.dark_dust_group = self._build_dark_dust_settings_panel()
+        note = _build_muted_wrapped_label(
+            "YAML comments are not preserved yet when saving edited metadata."
+        )
+
+        content_layout.addWidget(self.adjustment_section)
+        content_layout.addWidget(self.dark_dust_group)
+        content_layout.addWidget(note)
+        content_layout.addStretch(1)
+
+        self.right_scroll_area.setWidget(content)
+        layout.addWidget(self.right_scroll_area, 1)
+        return panel
+
+    def _build_adjustment_section(self) -> QWidget:
+        panel = QWidget(self)
+        panel.setObjectName("inspectorSection")
+        panel.setStyleSheet(
+            "QWidget#inspectorSection {"
+            "background-color: rgba(255, 255, 255, 0.03);"
+            "border: 1px solid rgba(148, 163, 184, 0.18);"
+            "border-radius: 12px;"
+            "}"
+        )
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        self.panel_heading = QLabel("Adjustments")
+        self.panel_heading = QLabel("Select an adjustment to edit its settings.")
+        self.panel_heading.setWordWrap(True)
         self.panel_heading.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addWidget(self.panel_heading)
+        divider = QFrame(panel)
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("color: rgba(148, 163, 184, 0.18);")
 
         self.editor_stack = QStackedWidget(self)
         self.editor_stack.addWidget(self._build_adjustment_editor())
         self.editor_stack.addWidget(self._build_region_editor())
-        layout.addWidget(self.editor_stack, 1)
 
-        self.dark_dust_group = self._build_dark_dust_settings_panel()
-        layout.addWidget(self.dark_dust_group)
-
-        note = QLabel(
-            "YAML comments are not preserved yet when saving edited metadata."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #7b8794;")
-        layout.addWidget(note)
+        layout.addWidget(self.panel_heading)
+        layout.addWidget(divider)
+        layout.addWidget(self.editor_stack)
         return panel
 
     def _build_adjustment_editor(self) -> QWidget:
@@ -364,13 +569,12 @@ class MainWindow(QMainWindow):
         self.adjustment_name_label.setWordWrap(True)
         self.adjustment_enabled_checkbox = QCheckBox("Enabled")
         self.adjustment_type_label = QLabel("")
-        self.adjustment_helper_label = QLabel("")
-        self.adjustment_helper_label.setWordWrap(True)
-        self.adjustment_helper_label.setStyleSheet("color: #7b8794;")
+        self.adjustment_helper_label = _build_muted_wrapped_label("")
 
         self.target_label = QLabel("Affects")
         self.target_label.setStyleSheet("font-weight: 600;")
         self.target_selector = QComboBox()
+        _allow_horizontal_shrink(self.target_selector)
 
         self.colour_title_label = QLabel("Colour Point")
         self.colour_title_label.setStyleSheet("font-weight: 600;")
@@ -378,6 +582,7 @@ class MainWindow(QMainWindow):
         self.colour_swatch = QLabel()
         self.colour_swatch.setFixedSize(24, 24)
         self.colour_point_label = QLabel("Not selected")
+        _allow_horizontal_shrink(self.colour_point_label)
         point_layout.addWidget(self.colour_swatch)
         point_layout.addWidget(self.colour_point_label, 1)
 
@@ -387,7 +592,9 @@ class MainWindow(QMainWindow):
         self.primary_input = QDoubleSpinBox()
         self.primary_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
         self.primary_input.setKeyboardTracking(False)
+        _allow_horizontal_shrink(self.primary_input)
         primary_controls = QWidget(self)
+        _allow_panel_horizontal_shrink(primary_controls)
         primary_controls_layout = QHBoxLayout(primary_controls)
         primary_controls_layout.setContentsMargins(0, 0, 0, 0)
         primary_controls_layout.setSpacing(8)
@@ -409,7 +616,9 @@ class MainWindow(QMainWindow):
             input_widget = QDoubleSpinBox()
             input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             input_widget.setKeyboardTracking(False)
+            _allow_horizontal_shrink(input_widget)
             row = QWidget(self.level_inputs_container)
+            _allow_panel_horizontal_shrink(row)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(8)
@@ -427,11 +636,14 @@ class MainWindow(QMainWindow):
         self.secondary_value_label = QLabel("")
         self.option_checkbox = QCheckBox("Preserve Brightness")
 
-        scope_title = QLabel("Apply in")
-        scope_title.setStyleSheet("font-weight: 600;")
+        self.scope_title_label = QLabel("Apply in")
+        self.scope_title_label.setStyleSheet("font-weight: 600;")
         self.apply_everywhere_checkbox = QCheckBox("Apply everywhere")
         self.region_scope_list = QListWidget()
+        self.region_scope_list.setMinimumHeight(110)
+        _allow_panel_horizontal_shrink(self.region_scope_list)
 
+        self.adjustment_name_label.setVisible(False)
         layout.addWidget(self.adjustment_name_label)
         layout.addWidget(self.adjustment_enabled_checkbox)
         layout.addWidget(self.adjustment_type_label)
@@ -447,31 +659,69 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.secondary_slider)
         layout.addWidget(self.secondary_value_label)
         layout.addWidget(self.option_checkbox)
-        layout.addWidget(scope_title)
+        layout.addWidget(self.scope_title_label)
         layout.addWidget(self.apply_everywhere_checkbox)
         layout.addWidget(self.region_scope_list, 1)
         return panel
 
     def _build_dark_dust_settings_panel(self) -> QWidget:
         panel = QWidget(self)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        title = QLabel("Dark Dust")
-        title.setStyleSheet("font-weight: 600;")
-        helper = QLabel(
-            "Controls the global Dark Dust semantic mask used by the overlay and any "
-            "adjustment that targets Dark Dust."
+        panel.setObjectName("inspectorSection")
+        _allow_panel_horizontal_shrink(panel)
+        panel.setStyleSheet(
+            "QWidget#inspectorSection {"
+            "background-color: rgba(255, 255, 255, 0.03);"
+            "border: 1px solid rgba(148, 163, 184, 0.18);"
+            "border-radius: 12px;"
+            "}"
         )
-        helper.setWordWrap(True)
-        helper.setStyleSheet("color: #7b8794;")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.dark_dust_title_label = QLabel("Dark Dust Mask")
+        self.dark_dust_title_label.setStyleSheet("font-weight: 600;")
+        self.dark_dust_toggle_button = QPushButton("▾")
+        self.dark_dust_toggle_button.setCheckable(True)
+        self.dark_dust_toggle_button.setChecked(True)
+        self.dark_dust_toggle_button.setFixedWidth(32)
+        self.dark_dust_toggle_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.dark_dust_toggle_button.setToolTip("Collapse Dark Dust Mask")
+        header.addWidget(self.dark_dust_title_label)
+        header.addStretch(1)
+        header.addWidget(self.dark_dust_toggle_button)
+
+        self.dark_dust_body = QWidget(panel)
+        _allow_panel_horizontal_shrink(self.dark_dust_body)
+        body_layout = QVBoxLayout(self.dark_dust_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        helper = _build_muted_wrapped_label(
+            "Controls the global Dark Dust mask used by the overlay and by adjustments "
+            "that target Dark Dust."
+        )
 
         self.dark_dust_enabled_checkbox = QCheckBox("Enabled")
         self.dark_dust_sensitivity_input = QDoubleSpinBox()
         self.dark_dust_structure_size_input = QDoubleSpinBox()
         self.dark_dust_background_protection_input = QDoubleSpinBox()
         self.dark_dust_softness_input = QDoubleSpinBox()
+        self.reset_dark_dust_button = QPushButton("Reset Dark Dust Mask")
+        for widget in [
+            self.dark_dust_sensitivity_input,
+            self.dark_dust_structure_size_input,
+            self.dark_dust_background_protection_input,
+            self.dark_dust_softness_input,
+            self.reset_dark_dust_button,
+        ]:
+            _allow_horizontal_shrink(widget)
 
         controls: list[tuple[str, QDoubleSpinBox]] = [
             ("Sensitivity", self.dark_dust_sensitivity_input),
@@ -479,37 +729,38 @@ class MainWindow(QMainWindow):
             ("Background Protection", self.dark_dust_background_protection_input),
             ("Softness", self.dark_dust_softness_input),
         ]
+        body_layout.addWidget(helper)
+        body_layout.addWidget(self.dark_dust_enabled_checkbox)
         for label, widget in controls:
             caption = QLabel(label)
             caption.setStyleSheet("font-weight: 600;")
             widget.setDecimals(2)
             widget.setRange(0.0, 1.0)
             widget.setSingleStep(0.01)
-            layout.addWidget(caption)
-            layout.addWidget(widget)
-
-        layout.addWidget(title)
-        layout.addWidget(helper)
-        layout.addWidget(self.dark_dust_enabled_checkbox)
+            body_layout.addWidget(caption)
+            body_layout.addWidget(widget)
+        body_layout.addWidget(self.reset_dark_dust_button)
+        layout.addLayout(header)
+        layout.addWidget(self.dark_dust_body)
+        self._set_dark_dust_collapsed(False)
         return panel
 
     def _build_region_editor(self) -> QWidget:
         panel = QWidget(self)
+        _allow_panel_horizontal_shrink(panel)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
         self.region_name_edit = QLineEdit()
+        _allow_horizontal_shrink(self.region_name_edit)
         self.region_enabled_checkbox = QCheckBox("Enabled")
-        self.region_helper_label = QLabel(
+        self.region_helper_label = _build_muted_wrapped_label(
             "Softens the boundary so the adjustment blends naturally into the surrounding image."
         )
-        self.region_helper_label.setWordWrap(True)
-        self.region_helper_label.setStyleSheet("color: #7b8794;")
         self.region_softness_slider = QSlider(Qt.Orientation.Horizontal)
         self.region_softness_value_label = QLabel("")
-        self.region_reference_label = QLabel("")
-        self.region_reference_label.setWordWrap(True)
+        self.region_reference_label = _build_muted_wrapped_label("")
 
         layout.addWidget(QLabel("Region Name"))
         layout.addWidget(self.region_name_edit)
@@ -525,6 +776,7 @@ class MainWindow(QMainWindow):
     def _build_bottom_panel(self) -> QWidget:
         panel = QWidget(self)
         panel.setMaximumHeight(220)
+        _allow_panel_horizontal_shrink(panel)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 12, 16, 16)
         layout.setSpacing(10)
@@ -533,10 +785,18 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-weight: 600;")
         self.changes_list = QListWidget()
         self.changes_list.setMaximumHeight(120)
+        _allow_panel_horizontal_shrink(self.changes_list)
         self.revert_change_button = QPushButton("Remove Selected Change")
         self.what_changed_button = QPushButton("What Changed?")
         self.revert_all_button = QPushButton("Revert All")
         self.save_button = QPushButton("Keep Change")
+        for widget in [
+            self.revert_change_button,
+            self.what_changed_button,
+            self.revert_all_button,
+            self.save_button,
+        ]:
+            _allow_horizontal_shrink(widget)
         actions = QHBoxLayout()
         actions.addWidget(self.revert_change_button)
         actions.addWidget(self.what_changed_button)
@@ -580,6 +840,7 @@ class MainWindow(QMainWindow):
         self.pick_button.clicked.connect(self._toggle_pick_mode)
         self.create_from_selection_button.clicked.connect(self._toggle_create_from_selection_mode)
         self.cancel_selection_button.clicked.connect(self.view_model.cancel_sampling)
+        self.help_button.clicked.connect(self._show_help_dialog)
 
         self.preview_widget.sampleClicked.connect(self._apply_sample)
         self.preview_widget.samplingCancelled.connect(self.view_model.cancel_sampling)
@@ -658,11 +919,55 @@ class MainWindow(QMainWindow):
             self.view_model.set_dark_dust_background_protection
         )
         self.dark_dust_softness_input.valueChanged.connect(self.view_model.set_dark_dust_softness)
+        self.reset_dark_dust_button.clicked.connect(self.view_model.reset_dark_dust_settings)
+        self.dark_dust_toggle_button.toggled.connect(self._on_dark_dust_toggled)
 
         self.revert_change_button.clicked.connect(self._revert_selected_change)
         self.what_changed_button.clicked.connect(self._show_semantic_changes)
         self.revert_all_button.clicked.connect(self.view_model.revert_unsaved_changes)
         self.save_button.clicked.connect(self.view_model.save_changes)
+        self.edit_dark_dust_button.clicked.connect(self._focus_dark_dust_panel)
+
+    def _app_settings(self) -> QSettings:
+        return QSettings(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            "NebulaMaster",
+            "Desktop",
+        )
+
+    def _show_startup_help_enabled(self) -> bool:
+        raw_value = self._app_settings().value(_HELP_SHOW_ON_STARTUP_KEY, True)
+        if isinstance(raw_value, bool):
+            return raw_value
+        if raw_value is None:
+            return True
+        return str(raw_value).strip().lower() not in {"0", "false", "no"}
+
+    def _set_show_startup_help_enabled(self, enabled: bool) -> None:
+        self._app_settings().setValue(_HELP_SHOW_ON_STARTUP_KEY, enabled)
+
+    def _maybe_show_startup_help(self) -> None:
+        if (
+            self._startup_help_prompted
+            or MainWindow._startup_help_shown_this_session
+            or not self._show_startup_help_enabled()
+        ):
+            return
+        self._startup_help_prompted = True
+        MainWindow._startup_help_shown_this_session = True
+        self._show_help_dialog(startup=True)
+
+    def _show_help_dialog(self, _checked: bool = False, *, startup: bool = False) -> None:
+        allow_suppress = startup
+        dialog = HelpDialog(self, allow_suppress=allow_suppress)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        if startup:
+            dialog.startupPreferenceChanged.connect(self._set_show_startup_help_enabled)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._help_dialog = dialog
 
     def _open_project_dialog(self) -> None:
         selected, _filter = QFileDialog.getOpenFileName(
@@ -941,6 +1246,7 @@ class MainWindow(QMainWindow):
         with QSignalBlocker(self.semantic_overlay_selector):
             self.semantic_overlay_selector.setCurrentIndex(0)
         self._refresh_dark_dust_settings()
+        self._update_dark_dust_action_visibility()
 
     def _refresh_sources(self) -> None:
         self.sources_list.clear()
@@ -1041,9 +1347,13 @@ class MainWindow(QMainWindow):
 
     def _apply_adjustment_summary(self, summary: AdjustmentSummary | None) -> None:
         if summary is None:
-            self.adjustment_name_label.setText("No adjustment selected.")
+            self.adjustment_name_label.setVisible(True)
+            self.adjustment_name_label.setText("Select an adjustment to edit its settings.")
             self.adjustment_type_label.setText("")
             self.adjustment_helper_label.setText("")
+            self.adjustment_enabled_checkbox.setVisible(False)
+            self.target_label.setVisible(False)
+            self.target_selector.setVisible(False)
             self.colour_title_label.setText("Colour Point")
             self.colour_point_label.setText("Not selected")
             self.colour_swatch.clear()
@@ -1059,11 +1369,16 @@ class MainWindow(QMainWindow):
             self.secondary_slider.setVisible(False)
             self.secondary_value_label.setVisible(False)
             self.option_checkbox.setVisible(False)
+            self.scope_title_label.setVisible(False)
+            self.apply_everywhere_checkbox.setVisible(False)
+            self.region_scope_list.setVisible(False)
             return
 
+        self.adjustment_name_label.setVisible(False)
         self.adjustment_name_label.setText(summary.name)
         self.adjustment_type_label.setText(summary.type_label)
         self.adjustment_helper_label.setText(summary.helper_text)
+        self.adjustment_enabled_checkbox.setVisible(True)
         with QSignalBlocker(self.adjustment_enabled_checkbox):
             self.adjustment_enabled_checkbox.setChecked(summary.enabled)
         self.adjustment_enabled_checkbox.setEnabled(True)
@@ -1210,6 +1525,9 @@ class MainWindow(QMainWindow):
             with QSignalBlocker(self.option_checkbox):
                 self.option_checkbox.setChecked(summary.option_enabled)
 
+        self.scope_title_label.setVisible(True)
+        self.apply_everywhere_checkbox.setVisible(True)
+        self.region_scope_list.setVisible(True)
         with QSignalBlocker(self.apply_everywhere_checkbox):
             self.apply_everywhere_checkbox.setChecked(not summary.region_ids)
         self.apply_everywhere_checkbox.setEnabled(summary.editable)
@@ -1277,6 +1595,7 @@ class MainWindow(QMainWindow):
             return
         mode = self.semantic_overlay_selector.itemData(index)
         if isinstance(mode, str):
+            self._update_dark_dust_action_visibility(mode)
             if mode == "off":
                 # Clear any visible diagnostic immediately before the next preview refresh.
                 self.preview_widget.set_semantic_overlay(None)
@@ -1568,14 +1887,21 @@ class MainWindow(QMainWindow):
     def _on_selection_changed(self, selection_kind: str) -> None:
         if selection_kind == "region":
             self.editor_stack.setCurrentIndex(1)
-            self.panel_heading.setText("Regions")
+            region = self.view_model.selected_region_summary()
+            self.panel_heading.setText(
+                f"Region: {region.name}" if region is not None else "Region"
+            )
             mode: InteractionMode = (
                 "draw_region" if self.view_model.is_drawing_region else "edit_region"
             )
             self.preview_widget.set_interaction_mode(mode)
         else:
             self.editor_stack.setCurrentIndex(0)
-            self.panel_heading.setText("Adjustments")
+            summary = self.view_model.selected_adjustment_summary()
+            if summary is None:
+                self.panel_heading.setText("Select an adjustment to edit its settings.")
+            else:
+                self.panel_heading.setText(f"Adjustment: {summary.name}")
             if not self.view_model.is_sampling:
                 self.preview_widget.set_interaction_mode("navigate")
 
@@ -1586,3 +1912,94 @@ class MainWindow(QMainWindow):
     def _on_region_visibility_changed(self, visible: bool) -> None:
         with QSignalBlocker(self.show_regions_checkbox):
             self.show_regions_checkbox.setChecked(visible)
+
+    def _focus_dark_dust_panel(self) -> None:
+        if not self.dark_dust_toggle_button.isChecked():
+            self.dark_dust_toggle_button.setChecked(True)
+        self.right_scroll_area.ensureWidgetVisible(self.dark_dust_group, 0, 24)
+
+    def _update_dark_dust_action_visibility(self, mode: str | None = None) -> None:
+        current_mode = mode or cast(str, self.semantic_overlay_selector.currentData() or "off")
+        self.edit_dark_dust_button.setVisible(current_mode == "dark_dust")
+
+    def _on_dark_dust_toggled(self, expanded: bool) -> None:
+        self._set_dark_dust_collapsed(not expanded)
+
+    def _set_dark_dust_collapsed(self, collapsed: bool) -> None:
+        self.dark_dust_body.setVisible(not collapsed)
+        self.dark_dust_toggle_button.setText("▸" if collapsed else "▾")
+        self.dark_dust_toggle_button.setToolTip(
+            "Expand Dark Dust Mask" if collapsed else "Collapse Dark Dust Mask"
+        )
+
+    def _configure_left_panel_action_icons(self) -> None:
+        style = self.style()
+        accent = QColor("#f4c542")
+        self._left_panel_action_buttons: list[tuple[QPushButton, str]] = [
+            (
+                self.move_earlier_button,
+                "Move Earlier",
+            ),
+            (
+                self.move_later_button,
+                "Move Later",
+            ),
+            (
+                self.duplicate_adjustment_button,
+                "Duplicate",
+            ),
+            (
+                self.remove_adjustment_button,
+                "Remove",
+            ),
+            (
+                self.reset_adjustment_button,
+                "Reset",
+            ),
+        ]
+        self.move_earlier_button.setIcon(
+            _tinted_standard_icon(
+                style,
+                QStyle.StandardPixmap.SP_ArrowUp,
+                color=accent,
+            )
+        )
+        self.move_later_button.setIcon(
+            _tinted_standard_icon(
+                style,
+                QStyle.StandardPixmap.SP_ArrowDown,
+                color=accent,
+            )
+        )
+        self.duplicate_adjustment_button.setIcon(
+            _tinted_standard_icon(
+                style,
+                QStyle.StandardPixmap.SP_FileDialogNewFolder,
+                color=accent,
+            )
+        )
+        self.remove_adjustment_button.setIcon(
+            _tinted_standard_icon(
+                style,
+                QStyle.StandardPixmap.SP_TrashIcon,
+                color=accent,
+            )
+        )
+        self.reset_adjustment_button.setIcon(
+            _tinted_standard_icon(
+                style,
+                QStyle.StandardPixmap.SP_BrowserReload,
+                color=accent,
+            )
+        )
+        self.move_earlier_button.setToolTip("Move selected adjustment earlier")
+        self.move_later_button.setToolTip("Move selected adjustment later")
+        self.duplicate_adjustment_button.setToolTip("Duplicate selected adjustment")
+        self.remove_adjustment_button.setToolTip("Remove selected adjustment")
+        self.reset_adjustment_button.setToolTip("Reset selected adjustment")
+        for button, label in getattr(self, "_left_panel_action_buttons", []):
+            _ = label
+            button.setText("")
+            button.setIconSize(QSize(18, 18))
+            button.setMinimumHeight(40)
+            button.setStyleSheet("padding: 0px; text-align: center;")

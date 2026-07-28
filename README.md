@@ -278,6 +278,10 @@ Current desktop mastering controls include:
 - semantic targets for Combined Image, Nebula, Stars and Dark Dust
 - polygon region scoping
 - image-driven colour-point sampling and adjustment creation
+- a resizable three-panel desktop workspace with the preview toolbar anchored to the centre panel
+- compact icon helper buttons for moving, duplicating, removing, and resetting adjustments
+- a collapsible Dark Dust control section in the right-hand inspector
+- built-in desktop help with a first-run getting-started popup and a reusable Help action
 - screen and print export using the shared renderer
 - packaged desktop application paths for macOS and Windows with a Nebula Master app icon
 
@@ -321,6 +325,10 @@ Current desktop workflows include:
 - Create adjustments from image selections
 - Draw polygon regions and scope adjustments to them
 - Preview semantic star, nebula, and dark dust overlays
+- Resize the left, center, and right panels to match the current task
+- Collapse or reopen Dark Dust controls without leaving the adjustment inspector
+- Use icon-button tooltips on narrow sidebars instead of losing action access
+- Open built-in help from the desktop and suppress the first-run help popup after reading it
 - Keep semantic unsaved-change history
 
 ## Current Adjustment Types
@@ -380,6 +388,25 @@ Print export currently supports:
 - Shared-renderer output planning
 
 ![Screen export dialog](docs/images/readme/export-screen-dialog.png)
+
+## Desktop help and workflow guidance
+
+The desktop app now includes built-in help aimed at first-time users:
+
+- a `Help` action in the app
+- a first-run getting-started popup
+- a `Do not display this window again` option for users who have already seen the guide
+
+That help content explains the real first-use flow:
+
+- create a project from an image
+- choose where the project folder should live
+- add and tune adjustments
+- save the project metadata
+- export a render
+- reopen the saved project later through `project.yaml`
+
+The same guidance is also available as [docs/nebula-master-get-started.pdf](/Users/damon/gitlab/nebulamaster/docs/nebula-master-get-started.pdf).
 
 ## Development and local packaging
 
@@ -444,14 +471,14 @@ The repository includes three GitHub Actions workflows:
 
 Release flow:
 
-1. Bump the repo version with `make bump-version VERSION=0.2.0` and push the commit to GitHub.
+1. Bump the repo version with `make bump-version VERSION=0.4.0` and push the commit to GitHub.
 2. In GitHub, open `Actions` -> `Create Release` -> `Run workflow`.
-3. Enter a version tag such as `v0.2.0` and choose the target ref, usually `main`.
+3. Enter a version tag such as `v0.4.0` and choose the target ref, usually `main`.
 4. The workflow confirms the tag matches the repo version, then creates and pushes the annotated tag.
 5. The same workflow then starts `Package Desktop` explicitly for that tag, which avoids GitHub's suppressed follow-on workflow behavior for `GITHUB_TOKEN` tag pushes.
 6. `Package Desktop` creates a draft release, uploads the macOS and Windows assets to that draft, and only then publishes the immutable release.
 7. After publish, `Package Desktop` updates the movable major tag, for example `v0`, to the released commit.
 
-This gives Nebula Master both immutable versioned releases such as `v0.2.1` and a movable convenience tag such as `v0`.
+This gives Nebula Master both immutable versioned releases such as `v0.4.0` and a movable convenience tag such as `v0`.
 
 For non-release test builds, run the `Package Desktop` workflow manually with `workflow_dispatch` and download the artifacts from the workflow run.
