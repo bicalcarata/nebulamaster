@@ -164,7 +164,7 @@ def _build_about_html() -> str:
         "<p><strong>Latest release:</strong> "
         '<a href="https://github.com/bicalcarata/nebulamaster/releases/latest">'
         "github.com/bicalcarata/nebulamaster/releases/latest</a></p>"
-        "<p>Written by reddit user <strong>u/bicalarata</strong>.<br>"
+        "<p>Written by reddit user <strong>u/bicalcarata</strong>.<br>"
         "Windows testing by <strong>u/mrrobinson7988</strong>.</p>"
         "<p><strong>Bug reports:</strong> "
         '<a href="https://github.com/bicalcarata/nebulamaster/discussions/categories/bugs">'
@@ -406,17 +406,33 @@ class MainWindow(QMainWindow):
         adjustment_actions.addWidget(self.reset_adjustment_button)
 
         region_header = QHBoxLayout()
+        region_header.setContentsMargins(0, 0, 0, 0)
+        region_header.setSpacing(8)
+        region_header_left = QHBoxLayout()
+        region_header_left.setContentsMargins(0, 0, 0, 0)
+        region_header_left.setSpacing(8)
+        region_header_right = QHBoxLayout()
+        region_header_right.setContentsMargins(0, 0, 0, 0)
+        region_header_right.setSpacing(8)
         region_title = QLabel("Regions")
         region_title.setStyleSheet("font-weight: 600;")
-        self.add_region_button = QPushButton("Add Region")
+        self.add_region_button = QPushButton("Add")
+        self.add_region_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.add_region_button.setMinimumWidth(52)
         self.cancel_region_button = QPushButton("Cancel")
         self.show_regions_checkbox = QCheckBox("Show")
         self.show_regions_checkbox.setChecked(True)
-        region_header.addWidget(region_title)
+        region_header_left.addWidget(region_title)
+        region_header_left.addWidget(self.add_region_button)
+        region_header_left.addStretch(1)
+        region_header_right.addWidget(self.show_regions_checkbox)
+        region_header_right.addWidget(self.cancel_region_button)
+        region_header.addLayout(region_header_left, 1)
         region_header.addStretch(1)
-        region_header.addWidget(self.show_regions_checkbox)
-        region_header.addWidget(self.add_region_button)
-        region_header.addWidget(self.cancel_region_button)
+        region_header.addLayout(region_header_right, 0)
 
         self.regions_list = QListWidget()
         _allow_panel_horizontal_shrink(self.regions_list)
@@ -432,7 +448,6 @@ class MainWindow(QMainWindow):
             self.duplicate_adjustment_button,
             self.remove_adjustment_button,
             self.reset_adjustment_button,
-            self.add_region_button,
             self.cancel_region_button,
             self.remove_region_button,
         ]:

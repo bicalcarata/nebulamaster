@@ -169,6 +169,25 @@ def test_keep_change_button_stays_next_to_unsaved_changes_label(
     assert button_geometry.left() < window.changes_list.geometry().left() + 180
 
 
+def test_add_region_button_stays_next_to_regions_label(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    button_geometry = window.add_region_button.geometry()
+    assert window.add_region_button.isVisible() is True
+    assert window.add_region_button.text() == "Add"
+    assert window.add_region_button.width() >= 40
+    assert button_geometry.top() < window.regions_list.geometry().top()
+    assert button_geometry.left() < window.regions_list.geometry().left() + 180
+    assert button_geometry.left() < window.show_regions_checkbox.geometry().left()
+
+
 def test_open_project_dialog_accepts_project_yaml(
     monkeypatch: Any,
     qtbot: Any,
