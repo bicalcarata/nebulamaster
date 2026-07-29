@@ -68,7 +68,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.4.5"
+        return "0.5.0"
 
 
 def _ensure_output_path(output_path: Path, force: bool) -> Path:
@@ -96,6 +96,7 @@ def render_preview_image(
         bundle,
         write_debug_masks_dir=write_debug_masks_dir,
         use_cached_sources=use_cached_sources,
+        preview_max_edge=max_edge,
     )
     mastered = CanonicalImage(
         data=execution.image,

@@ -72,6 +72,8 @@ class SemanticOverlay:
     mode: SemanticOverlayMode
     label: str
     mask: np.ndarray
+    display_mode: Literal["overlay", "mask"] = "overlay"
+    coverage_percent: float | None = None
 
 
 def canonical_image_to_qimage(image: CanonicalImage) -> QImage:
@@ -124,6 +126,18 @@ def semantic_overlay_rgba(mask: np.ndarray, mode: SemanticOverlayMode) -> np.nda
     rgba[..., :3] = 0
     rgba[..., :3][use_tint] = tint_rgb
     rgba[..., 3] = np.clip(alpha * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    return np.ascontiguousarray(rgba)
+
+
+def semantic_overlay_mask_rgba(mask: np.ndarray) -> np.ndarray:
+    clipped = np.clip(mask, 0.0, 1.0).astype(np.float32, copy=False)
+    alpha = np.clip(clipped * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8, copy=False)
+    luminance = np.clip(clipped * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8, copy=False)
+    rgba = np.empty((*clipped.shape, 4), dtype=np.uint8)
+    rgba[..., 0] = luminance
+    rgba[..., 1] = luminance
+    rgba[..., 2] = luminance
+    rgba[..., 3] = alpha
     return np.ascontiguousarray(rgba)
 
 
@@ -304,7 +318,10 @@ class ImagePreviewWidget(QWidget):
             self._semantic_overlay_pixmap = None
             return
 
-        rgba = semantic_overlay_rgba(self._semantic_overlay.mask, self._semantic_overlay.mode)
+        if self._semantic_overlay.display_mode == "mask":
+            rgba = semantic_overlay_mask_rgba(self._semantic_overlay.mask)
+        else:
+            rgba = semantic_overlay_rgba(self._semantic_overlay.mask, self._semantic_overlay.mode)
         height, width, _channels = rgba.shape
         qimage = QImage(
             rgba.data,
@@ -399,7 +416,13 @@ class ImagePreviewWidget(QWidget):
         rect, _scale = self._target_rect()
         if rect is None:
             return
-        painter.drawPixmap(rect, self._pixmap, self._pixmap.rect())
+        show_mask_only = (
+            self._semantic_overlay is not None
+            and self._semantic_overlay.display_mode == "mask"
+            and self._semantic_overlay_pixmap is not None
+        )
+        if not show_mask_only:
+            painter.drawPixmap(rect, self._pixmap, self._pixmap.rect())
         if self._semantic_overlay_pixmap is not None and self._semantic_overlay is not None:
             painter.drawPixmap(
                 rect,

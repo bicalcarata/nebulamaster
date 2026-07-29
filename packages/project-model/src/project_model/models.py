@@ -30,6 +30,7 @@ SelectionSource = Literal["original", "current"]
 ColourChannel = Literal["red", "green", "blue"]
 SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
 FauxPaletteId = Literal["hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour"]
+FauxPaletteBalanceKey = Literal["gold", "green", "cyan", "red", "amber", "warm", "cool"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
@@ -39,6 +40,34 @@ CropMode = Literal["fit", "fill", "exact"]
 SourceRole = Literal["base", "red", "blue", "cyan", "luminance", "neutral", "custom"]
 AlignmentMode = Literal["none", "inspect", "translation", "manual"]
 SourceMixMode = Literal["weighted_average", "lighten", "screen", "channel_contribution"]
+
+FAUX_PALETTE_DISPLAY_NAMES: dict[FauxPaletteId, str] = {
+    "hubble": "Faux Hubble",
+    "hoo": "Faux HOO",
+    "foraxx": "Foraxx-Inspired",
+    "gold_cyan": "Gold & Cyan",
+    "natural_bicolour": "Natural Bi-colour",
+}
+
+FAUX_PALETTE_COLOUR_BALANCE_LABELS: dict[FauxPaletteBalanceKey, str] = {
+    "gold": "Gold",
+    "green": "Green",
+    "cyan": "Cyan",
+    "red": "Red",
+    "amber": "Amber",
+    "warm": "Warm",
+    "cool": "Cool",
+}
+
+FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS: dict[
+    FauxPaletteId, tuple[FauxPaletteBalanceKey, ...]
+] = {
+    "hubble": ("gold", "green", "cyan"),
+    "hoo": ("red", "cyan"),
+    "foraxx": ("amber", "cyan"),
+    "gold_cyan": ("gold", "cyan"),
+    "natural_bicolour": ("warm", "cool"),
+}
 
 
 class StrictModel(BaseModel):
@@ -189,6 +218,9 @@ class DarkDustSettings(StrictModel):
     structure_size: float = Field(default=0.09, gt=0.0, le=1.0)
     background_protection: float = Field(default=0.30, ge=0.0, le=1.0)
     softness: float = Field(default=0.22, ge=0.0, le=1.0)
+    veil_strength: float = Field(default=0.62, ge=0.0, le=1.0)
+    core_strength: float = Field(default=0.70, ge=0.0, le=1.0)
+    veil_core_balance: float = Field(default=0.46, ge=0.0, le=1.0)
 
 
 class FileReference(StrictModel):
@@ -270,11 +302,61 @@ class ColourSmoothingTransform(StrictModel):
     strength: float = Field(ge=0.0, le=1.0)
 
 
+class FauxPaletteColourBalance(StrictModel):
+    gold: float | None = Field(default=None, ge=0.0, le=200.0)
+    green: float | None = Field(default=None, ge=0.0, le=200.0)
+    cyan: float | None = Field(default=None, ge=0.0, le=200.0)
+    red: float | None = Field(default=None, ge=0.0, le=200.0)
+    amber: float | None = Field(default=None, ge=0.0, le=200.0)
+    warm: float | None = Field(default=None, ge=0.0, le=200.0)
+    cool: float | None = Field(default=None, ge=0.0, le=200.0)
+
+    def present_keys(self) -> set[FauxPaletteBalanceKey]:
+        return {
+            cast(FauxPaletteBalanceKey, key)
+            for key, value in self.model_dump().items()
+            if value is not None
+        }
+
+
 class FauxPaletteTransform(StrictModel):
     type: Literal["faux_palette"]
     palette: FauxPaletteId
     amount: float = Field(default=0.0, ge=0.0, le=1.0)
     preserve_brightness: bool = True
+    colour_balance: FauxPaletteColourBalance = Field(default_factory=FauxPaletteColourBalance)
+
+    @model_validator(mode="after")
+    def normalize_colour_balance(self) -> FauxPaletteTransform:
+        supported = set(FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[self.palette])
+        present = self.colour_balance.present_keys()
+        unsupported = sorted(present - supported)
+        if unsupported:
+            labels = ", ".join(unsupported)
+            raise ValueError(
+                f"colour_balance contains unsupported keys for palette '{self.palette}': {labels}"
+            )
+        for key in supported:
+            if getattr(self.colour_balance, key) is None:
+                setattr(self.colour_balance, key, 100.0)
+        return self
+
+    def supported_colour_balance(self) -> dict[FauxPaletteBalanceKey, float]:
+        return {
+            key: float(getattr(self.colour_balance, key))
+            for key in FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[self.palette]
+        }
+
+
+class DarkNebulaProcessingTransform(StrictModel):
+    type: Literal["dark_nebula_processing"]
+    amount: float = Field(default=0.0, ge=0.0, le=1.0)
+    reveal_dust: float = Field(default=0.40, ge=0.0, le=1.0)
+    dust_contrast: float = Field(default=0.30, ge=0.0, le=1.0)
+    core_depth: float = Field(default=0.55, ge=0.0, le=1.0)
+    dust_colour: float = Field(default=0.15, ge=0.0, le=1.0)
+    softness: float = Field(default=0.20, ge=0.0, le=1.0)
+    preserve_bright_areas: bool = True
 
 
 TransformationDeclaration = Annotated[
@@ -284,7 +366,8 @@ TransformationDeclaration = Annotated[
     | SaturationTransform
     | LevelsTransform
     | ColourSmoothingTransform
-    | FauxPaletteTransform,
+    | FauxPaletteTransform
+    | DarkNebulaProcessingTransform,
     Field(discriminator="type"),
 ]
 RuleTransform = TransformationDeclaration

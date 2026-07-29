@@ -12,6 +12,7 @@ from image_io import (
     crop_image,
     inspect_image,
     resize_exact,
+    resize_to_max_edge,
     save_image,
     sha256_file,
 )
@@ -114,7 +115,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.4.5"
+        return "0.5.0"
 
 
 def _enabled_sources(bundle: ProjectBundle) -> list[SourceImage]:
@@ -336,6 +337,7 @@ def execute_project_image(
     *,
     write_debug_masks_dir: Path | None = None,
     use_cached_sources: bool = True,
+    preview_max_edge: int | None = None,
 ) -> tuple[SourceImage, Path, CanonicalImage, RuleExecutionResult, PreparedSourcesResult]:
     prepared_sources = inspect_sources(bundle, use_cache=use_cached_sources)
     reference_source = next(
@@ -345,12 +347,17 @@ def execute_project_image(
     )
     source_path = resolve_reference_path(bundle.project_dir, reference_source.path)
     canonical = prepared_sources.image
+    working_image = (
+        resize_to_max_edge(canonical, preview_max_edge)
+        if preview_max_edge is not None
+        else canonical
+    )
     execution = execute_rule_stack(
         bundle,
-        prepared_sources.image.data,
+        working_image.data,
         write_debug_masks_dir=write_debug_masks_dir,
     )
-    return reference_source, source_path, canonical, execution, prepared_sources
+    return reference_source, source_path, working_image, execution, prepared_sources
 
 
 def render_output(

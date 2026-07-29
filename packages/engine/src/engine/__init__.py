@@ -14,7 +14,12 @@ from .render import (
     render_output,
 )
 from .selection import apply_weighted_channel_transform, brightness_weight, colour_weight
-from .semantic import dark_dust_influence, semantic_target_influence, star_influence
+from .semantic import (
+    analyze_dark_dust,
+    dark_dust_influence,
+    semantic_target_influence,
+    star_influence,
+)
 from .sources import (
     PreparedSourcesResult,
     SourceAlignmentReport,
@@ -60,6 +65,7 @@ __all__ = [
     "ValidationRuntimeError",
     "apply_crop",
     "apply_weighted_channel_transform",
+    "analyze_dark_dust",
     "brightness_weight",
     "diff_projects",
     "diff_bundles",

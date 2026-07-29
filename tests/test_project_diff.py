@@ -160,6 +160,48 @@ def test_faux_hubble_amount_change_is_reported_semantically(tmp_path: Path) -> N
     assert "Changed Faux Hubble amount from 25% to 60%." in summaries
 
 
+def test_faux_hubble_colour_balance_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    payload = _read_yaml(project_a / "project.yaml")
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "faux-hubble",
+            "name": "Faux Hubble",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "amount": 0.60,
+                "preserve_brightness": True,
+                "colour_balance": {"gold": 100.0, "green": 100.0, "cyan": 100.0},
+            },
+        }
+    )
+    _write_yaml(project_a / "project.yaml", payload)
+    _write_yaml(project_b / "project.yaml", payload)
+
+    other_payload = _read_yaml(project_b / "project.yaml")
+    other_rules = other_payload["rules"]
+    assert isinstance(other_rules, list)
+    other_rules[-1]["transform"]["colour_balance"]["gold"] = 70.0
+    other_rules[-1]["transform"]["colour_balance"]["cyan"] = 135.0
+    _write_yaml(project_b / "project.yaml", other_payload)
+
+    result = diff_projects(project_a, project_b)
+    summaries = [change.human_summary for change in result.modified_items]
+
+    assert (
+        "Changed Faux Hubble colour balance: Gold from 100% to 70% and Cyan from 100% to 135%."
+        in summaries
+    )
+
+
 def test_faux_palette_name_change_is_reported_semantically(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")
@@ -197,6 +239,47 @@ def test_faux_palette_name_change_is_reported_semantically(tmp_path: Path) -> No
     summaries = [change.human_summary for change in result.modified_items]
 
     assert "Changed palette from Faux HOO to Gold & Cyan." in summaries
+
+
+def test_dark_nebula_processing_control_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    payload = _read_yaml(project_a / "project.yaml")
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "dark-nebula",
+            "name": "Dark Nebula Processing",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "dark_dust",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "dark_nebula_processing",
+                "amount": 0.55,
+                "reveal_dust": 0.30,
+                "dust_contrast": 0.25,
+                "core_depth": 0.55,
+                "dust_colour": 0.15,
+                "softness": 0.20,
+                "preserve_bright_areas": True,
+            },
+        }
+    )
+    _write_yaml(project_a / "project.yaml", payload)
+    _write_yaml(project_b / "project.yaml", payload)
+
+    other_payload = _read_yaml(project_b / "project.yaml")
+    other_rules = other_payload["rules"]
+    assert isinstance(other_rules, list)
+    other_rules[-1]["transform"]["reveal_dust"] = 0.45
+    _write_yaml(project_b / "project.yaml", other_payload)
+
+    result = diff_projects(project_a, project_b)
+    summaries = [change.human_summary for change in result.modified_items]
+
+    assert "Changed Reveal Dust from 30% to 45%." in summaries
 
 
 def test_feather_only_region_change_is_distinguished(tmp_path: Path) -> None:

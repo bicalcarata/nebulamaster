@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from time import perf_counter
+from typing import cast
 
 import numpy as np
 from project_model import (
@@ -10,6 +11,7 @@ from project_model import (
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    DarkNebulaProcessingTransform,
     DeclarativeRule,
     FauxPaletteTransform,
     LevelsTransform,
@@ -24,6 +26,7 @@ from .selection import (
     apply_brightness_transform,
     apply_colour_amount,
     apply_colour_smoothing,
+    apply_dark_nebula_processing,
     apply_faux_palette,
     apply_levels_transform,
     apply_saturation_transform,
@@ -33,7 +36,7 @@ from .selection import (
     compute_luminance,
     saturation_weight,
 )
-from .semantic import semantic_target_influence
+from .semantic import analyze_dark_dust, semantic_target_influence
 
 
 class RuleExecutionTrace(BaseModel):
@@ -190,6 +193,24 @@ def _apply_transform(
             palette=transform.palette,
             amount=transform.amount,
             preserve_brightness=transform.preserve_brightness,
+            colour_balance=cast(dict[str, float], transform.supported_colour_balance()),
+        )
+    if isinstance(transform, DarkNebulaProcessingTransform):
+        dark_dust = analyze_dark_dust(current_image, bundle.project.dark_dust)
+        return apply_dark_nebula_processing(
+            current_image,
+            weights,
+            veil_mask=dark_dust.veil_mask,
+            core_mask=dark_dust.core_mask,
+            local_illumination=dark_dust.local_illumination,
+            relative_darkness=dark_dust.relative_darkness,
+            amount=transform.amount,
+            reveal_dust=transform.reveal_dust,
+            dust_contrast=transform.dust_contrast,
+            core_depth=transform.core_depth,
+            dust_colour=transform.dust_colour,
+            softness=transform.softness,
+            preserve_bright_areas=transform.preserve_bright_areas,
         )
     raise ValueError(f"unsupported transform type: {transform.type}")
 

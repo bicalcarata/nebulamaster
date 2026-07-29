@@ -9,6 +9,7 @@ import numpy as np
 import yaml
 from engine import semantic_target_influence
 from engine.render import render_bundle_output
+from engine.semantic import analyze_dark_dust
 from image_io import CanonicalImage, inspect_image, load_canonical_image
 from nebula_desktop import __version__ as desktop_version
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
@@ -458,6 +459,9 @@ def test_dark_dust_panel_has_dedicated_reset_action(
     assert settings.structure_size == 0.09
     assert settings.background_protection == 0.30
     assert settings.softness == 0.22
+    assert settings.veil_strength == 0.62
+    assert settings.core_strength == 0.70
+    assert settings.veil_core_balance == 0.46
 
 
 def test_dark_dust_panel_can_be_collapsed_and_expanded(
@@ -632,10 +636,23 @@ def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path
     assert summary.option_label == "Preserve Brightness"
     assert summary.option_enabled is True
     assert summary.supports_colour_point is False
+    assert [(control.label, control.value) for control in summary.palette_balance_controls] == [
+        ("Gold", 100.0),
+        ("Green", 100.0),
+        ("Cyan", 100.0),
+    ]
 
     rule = view_model._selected_rule_model()
     assert rule is not None
     assert isinstance(rule.transform, FauxPaletteTransform)
+    view_model.set_selected_adjustment_palette_balance("gold", 80.0)
+    updated = view_model.selected_adjustment_summary()
+    assert updated is not None
+    assert updated.palette_balance_controls[0].value == 80.0
+    view_model.reset_selected_adjustment_palette_balance(render=False)
+    reset = view_model.selected_adjustment_summary()
+    assert reset is not None
+    assert all(control.value == 100.0 for control in reset.palette_balance_controls)
     view_model.duplicate_selected_adjustment()
     assert view_model._selected_rule_model() is not None
     view_model.set_selected_adjustment_enabled(False)
@@ -653,22 +670,63 @@ def test_additional_faux_palette_adjustments_use_shared_controls(tmp_path: Path)
     view_model = ProjectEditorViewModel()
     assert view_model.open_project(project_dir) is True
 
-    expected: tuple[tuple[AdjustmentKind, str], ...] = (
-        ("faux_hoo", "Faux HOO"),
-        ("foraxx", "Foraxx-Inspired"),
-        ("gold_cyan", "Gold & Cyan"),
-        ("natural_bicolour", "Natural Bi-colour"),
+    expected: tuple[tuple[AdjustmentKind, str, tuple[str, ...]], ...] = (
+        ("faux_hoo", "Faux HOO", ("Red", "Cyan")),
+        ("foraxx", "Foraxx-Inspired", ("Amber", "Cyan")),
+        ("gold_cyan", "Gold & Cyan", ("Gold", "Cyan")),
+        ("natural_bicolour", "Natural Bi-colour", ("Warm", "Cool")),
     )
-    for kind, label in expected:
+    for kind, label, controls in expected:
         view_model.create_adjustment(kind)
         summary = view_model.selected_adjustment_summary()
         assert summary is not None
         assert summary.type_label == label
         assert summary.transform_type == "faux_palette"
         assert summary.target_id == "nebula"
+        assert tuple(control.label for control in summary.palette_balance_controls) == controls
         rule = view_model._selected_rule_model()
         assert rule is not None
         assert isinstance(rule.transform, FauxPaletteTransform)
+
+
+def test_palette_balance_changes_defer_panel_refresh_until_slider_release(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    refreshes: list[int] = []
+    window.view_model.adjustmentsChanged.connect(lambda: refreshes.append(1))
+
+    scenarios: tuple[tuple[AdjustmentKind, str, str], ...] = (
+        ("faux_hubble", "Faux Hubble", "gold"),
+        ("faux_hoo", "Faux HOO", "red"),
+        ("foraxx", "Foraxx-Inspired", "amber"),
+        ("gold_cyan", "Gold & Cyan", "gold"),
+        ("natural_bicolour", "Natural Bi-colour", "warm"),
+    )
+
+    for kind, label, control_key in scenarios:
+        window.view_model.create_adjustment(kind)
+        refreshes.clear()
+
+        window.view_model.set_adjustment_interaction_active(True)
+        window.view_model.set_selected_adjustment_palette_balance(control_key, 80.0, render=False)
+        window.view_model.set_selected_adjustment_palette_balance(control_key, 60.0, render=False)
+
+        assert refreshes == []
+
+        window.view_model.set_adjustment_interaction_active(False)
+
+        assert len(refreshes) == 1
+        summary = window.view_model.selected_adjustment_summary()
+        assert summary is not None
+        assert summary.type_label == label
+        assert summary.palette_balance_controls[0].value == 60.0
 
 
 def test_desktop_export_matches_direct_renderer_for_faux_hubble(tmp_path: Path) -> None:
@@ -828,12 +886,12 @@ def test_semantic_overlay_mode_exposes_star_mask_from_current_image(tmp_path: Pa
 
     view_model.set_semantic_overlay_mode("dark_dust")
     dark_dust_overlay = view_model.current_semantic_overlay()
-    display_image = view_model.current_display_image()
+    overlay_image = view_model._semantic_overlay_source_image()
     assert dark_dust_overlay is not None
-    assert display_image is not None
+    assert overlay_image is not None
     assert dark_dust_overlay.mode == "dark_dust"
     expected_mask = semantic_target_influence(
-        display_image.data,
+        overlay_image.data,
         "dark_dust",
         view_model.dark_dust_settings(),
     )
@@ -898,6 +956,9 @@ def test_dark_dust_settings_are_saved_and_loaded(
     window.dark_dust_structure_size_input.setValue(0.13)
     window.dark_dust_background_protection_input.setValue(0.24)
     window.dark_dust_softness_input.setValue(0.29)
+    window.dark_dust_veil_strength_input.setValue(0.67)
+    window.dark_dust_core_strength_input.setValue(0.74)
+    window.dark_dust_veil_core_balance_input.setValue(0.51)
     window.view_model.save_changes()
 
     payload = read_yaml_mapping(project_dir / "project.yaml")
@@ -907,6 +968,9 @@ def test_dark_dust_settings_are_saved_and_loaded(
         "structure_size": 0.13,
         "background_protection": 0.24,
         "softness": 0.29,
+        "veil_strength": 0.67,
+        "core_strength": 0.74,
+        "veil_core_balance": 0.51,
     }
 
     reopened = ProjectEditorViewModel()
@@ -916,6 +980,166 @@ def test_dark_dust_settings_are_saved_and_loaded(
     assert settings.structure_size == 0.13
     assert settings.background_protection == 0.24
     assert settings.softness == 0.29
+    assert settings.veil_strength == 0.67
+    assert settings.core_strength == 0.74
+    assert settings.veil_core_balance == 0.51
+
+
+def test_dark_dust_overlay_views_match_internal_analysis_and_show_coverage(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    dark_dust_index = window.semantic_overlay_selector.findData("dark_dust")
+    assert dark_dust_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(dark_dust_index)
+    qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is not None, timeout=5000)
+
+    overlay_image = window.view_model._semantic_overlay_source_image()
+    assert overlay_image is not None
+    analysis = analyze_dark_dust(overlay_image.data, window.view_model.dark_dust_settings())
+
+    final_overlay = window.preview_widget.semantic_overlay()
+    assert final_overlay is not None
+    np.testing.assert_allclose(final_overlay.mask, analysis.final_mask)
+    assert window.dark_dust_coverage_label.text().startswith("Dark Dust Coverage: ")
+
+    for view_name, expected in (
+        ("Veil Mask", analysis.veil_mask),
+        ("Core Mask", analysis.core_mask),
+        ("Relative Darkness", analysis.relative_darkness),
+        ("Local Illumination", analysis.local_illumination),
+        ("Background Support", analysis.background_support),
+    ):
+        index = window.dark_dust_view_selector.findText(view_name)
+        assert index >= 0
+        window.dark_dust_view_selector.setCurrentIndex(index)
+        overlay = window.preview_widget.semantic_overlay()
+        assert overlay is not None
+        np.testing.assert_allclose(overlay.mask, expected)
+
+
+def test_dark_dust_overlay_mask_only_and_solo_mode_update_display_mode(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    dark_dust_index = window.semantic_overlay_selector.findData("dark_dust")
+    assert dark_dust_index >= 0
+    window.semantic_overlay_selector.setCurrentIndex(dark_dust_index)
+    qtbot.waitUntil(lambda: window.preview_widget.semantic_overlay() is not None, timeout=5000)
+
+    mask_only_index = window.dark_dust_display_selector.findText("Mask Only")
+    assert mask_only_index >= 0
+    window.dark_dust_display_selector.setCurrentIndex(mask_only_index)
+    overlay = window.preview_widget.semantic_overlay()
+    assert overlay is not None
+    assert overlay.display_mode == "mask"
+
+    overlay_index = window.dark_dust_display_selector.findText("Overlay on Image")
+    assert overlay_index >= 0
+    window.dark_dust_display_selector.setCurrentIndex(overlay_index)
+    window.dark_dust_solo_button.click()
+    solo_overlay = window.preview_widget.semantic_overlay()
+    assert solo_overlay is not None
+    assert solo_overlay.display_mode == "mask"
+
+
+def test_dark_nebula_processing_adjustment_defaults_and_controls(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    window = MainWindow(project_dir)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("dark_nebula_processing")
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Dark Nebula Processing"
+    assert summary.target_id == "dark_dust"
+    assert summary.primary_label == "Amount"
+    assert summary.option_label == "Preserve Bright Areas"
+    assert [control.label for control in summary.extra_numeric_controls] == [
+        "Reveal Dust",
+        "Dust Contrast",
+        "Core Depth",
+        "Dust Colour",
+        "Softness",
+    ]
+    assert window.extra_adjustment_controls_section.isVisible() is True
+    assert window.extra_adjustment_controls_layout.count() == 10
+
+
+def test_desktop_export_matches_direct_renderer_for_dark_nebula_processing(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "dark-nebula",
+            "name": "Dark Nebula Processing",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "dark_dust",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "dark_nebula_processing",
+                "amount": 0.65,
+                "reveal_dust": 0.60,
+                "dust_contrast": 0.45,
+                "core_depth": 0.70,
+                "dust_colour": 0.20,
+                "softness": 0.25,
+                "preserve_bright_areas": True,
+            },
+        }
+    )
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    native = view_model.native_render_dimensions()
+    assert native is not None
+    profile = view_model.build_screen_export_profile(
+        output_format="png",
+        width_px=native[0],
+        interpolation="nearest",
+    )
+    desktop_path = tmp_path / "desktop-dark-nebula.png"
+    direct_path = tmp_path / "direct-dark-nebula.png"
+    view_model.export_render(
+        output_path=desktop_path,
+        profile_id="screen-export",
+        profile=profile,
+        force=True,
+    )
+    assert view_model._working_documents is not None
+    render_bundle_output(
+        view_model._working_documents.bundle.model_copy(deep=True),
+        profile_id="screen-export",
+        profile=profile,
+        output_path=direct_path,
+        force=True,
+    )
+
+    desktop_image = load_canonical_image(desktop_path).data
+    direct_image = load_canonical_image(direct_path).data
+    assert np.allclose(desktop_image, direct_image)
 
 
 def test_nebula_overlay_fill_alpha_stays_subtle_inside_large_selected_area() -> None:

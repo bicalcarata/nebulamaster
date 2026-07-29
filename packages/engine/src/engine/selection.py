@@ -3,11 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from project_model import (
+    FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS as PROJECT_FAUX_PALETTE_SUPPORTED_KEYS,
+)
 
 LINEAR_LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 LUMA_WEIGHT = 0.25
 EPSILON = 1e-6
 CHANNEL_INDEX = {"red": 0, "green": 1, "blue": 2}
+FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS: dict[str, tuple[str, ...]] = {
+    key: value for key, value in PROJECT_FAUX_PALETTE_SUPPORTED_KEYS.items()
+}
+
+
+@dataclass(frozen=True)
+class FauxPaletteColourControlDefinition:
+    key: str
+    component_weights: tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -24,6 +36,7 @@ class FauxPaletteDefinition:
     green_reduction: float
     saturation_scale: float
     original_chroma_mix: float
+    colour_controls: tuple[FauxPaletteColourControlDefinition, ...]
 
 
 FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
@@ -40,6 +53,11 @@ FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
         green_reduction=0.35,
         saturation_scale=1.02,
         original_chroma_mix=0.06,
+        colour_controls=(
+            FauxPaletteColourControlDefinition("gold", (1.0, 0.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("green", (0.0, 1.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("cyan", (0.0, 0.0, 1.0, 0.0)),
+        ),
     ),
     "hoo": FauxPaletteDefinition(
         warm_target=(1.00, 0.18, 0.08),
@@ -54,6 +72,10 @@ FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
         green_reduction=0.32,
         saturation_scale=1.00,
         original_chroma_mix=0.08,
+        colour_controls=(
+            FauxPaletteColourControlDefinition("red", (1.0, 1.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("cyan", (0.0, 0.0, 1.0, 0.0)),
+        ),
     ),
     "foraxx": FauxPaletteDefinition(
         warm_target=(1.00, 0.48, 0.05),
@@ -68,6 +90,10 @@ FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
         green_reduction=0.26,
         saturation_scale=1.08,
         original_chroma_mix=0.04,
+        colour_controls=(
+            FauxPaletteColourControlDefinition("amber", (1.0, 1.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("cyan", (0.0, 0.0, 1.0, 0.0)),
+        ),
     ),
     "gold_cyan": FauxPaletteDefinition(
         warm_target=(1.00, 0.62, 0.10),
@@ -82,6 +108,10 @@ FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
         green_reduction=0.22,
         saturation_scale=0.94,
         original_chroma_mix=0.12,
+        colour_controls=(
+            FauxPaletteColourControlDefinition("gold", (1.0, 1.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("cyan", (0.0, 0.0, 1.0, 0.0)),
+        ),
     ),
     "natural_bicolour": FauxPaletteDefinition(
         warm_target=(0.92, 0.28, 0.18),
@@ -96,6 +126,10 @@ FAUX_PALETTES: dict[str, FauxPaletteDefinition] = {
         green_reduction=0.18,
         saturation_scale=0.82,
         original_chroma_mix=0.28,
+        colour_controls=(
+            FauxPaletteColourControlDefinition("warm", (1.0, 1.0, 0.0, 0.0)),
+            FauxPaletteColourControlDefinition("cool", (0.0, 0.0, 1.0, 0.0)),
+        ),
     ),
 }
 
@@ -431,6 +465,123 @@ def apply_colour_smoothing(
     return np.asarray(clipped, dtype=np.float32)
 
 
+def apply_dark_nebula_processing(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    veil_mask: np.ndarray,
+    core_mask: np.ndarray,
+    local_illumination: np.ndarray,
+    relative_darkness: np.ndarray,
+    amount: float,
+    reveal_dust: float,
+    dust_contrast: float,
+    core_depth: float,
+    dust_colour: float,
+    softness: float,
+    preserve_bright_areas: bool,
+) -> np.ndarray:
+    if amount <= 0.0:
+        return current_rgb.astype(np.float32, copy=True)
+
+    linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0])).astype(np.float32, copy=False)
+    shorter = float(min(current_rgb.shape[0], current_rgb.shape[1]))
+    smoothing_radius = max(1, int(round(shorter * (0.003 + (0.012 * softness)))))
+
+    bright_protection = np.ones_like(luminance, dtype=np.float32)
+    if preserve_bright_areas:
+        highlight_t = np.clip((luminance - 0.14) / 0.16, 0.0, 1.0).astype(
+            np.float32,
+            copy=False,
+        )
+        bright_protection = (
+            1.0 - (highlight_t * highlight_t * (3.0 - (2.0 * highlight_t)))
+        ).astype(np.float32, copy=False)
+
+    process_mask = np.maximum(veil_mask, core_mask).astype(np.float32, copy=False)
+    if softness > 0.0:
+        process_mask = box_blur(
+            np.repeat(process_mask[..., None], 3, axis=-1),
+            smoothing_radius,
+        )[..., 0].astype(np.float32, copy=False)
+    process_mask = np.clip(
+        process_mask * bright_protection,
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    veil_lift = (
+        reveal_dust
+        * bright_protection
+        * veil_mask
+        * (0.06 + (0.14 * relative_darkness))
+    ).astype(np.float32, copy=False)
+    veil_luminance = np.clip(luminance + veil_lift, 0.0, 1.0).astype(np.float32, copy=False)
+
+    contrast_radius = max(2, int(round(shorter * 0.01)))
+    local_field = box_blur(
+        np.repeat(veil_luminance[..., None], 3, axis=-1),
+        contrast_radius,
+    )[..., 0].astype(np.float32, copy=False)
+    low_frequency_delta = (veil_luminance - local_field).astype(np.float32, copy=False)
+    veil_contrast = (
+        veil_luminance
+        + (low_frequency_delta * dust_contrast * 0.65 * veil_mask * bright_protection)
+    ).astype(np.float32, copy=False)
+
+    veil_field = box_blur(
+        np.repeat(veil_contrast[..., None], 3, axis=-1),
+        max(contrast_radius + 2, int(round(contrast_radius * 1.8))),
+    )[..., 0].astype(np.float32, copy=False)
+    relative_core_depth = np.clip(veil_field - luminance, 0.0, 1.0).astype(np.float32, copy=False)
+    core_luminance = np.clip(
+        veil_contrast
+        - (core_depth * core_mask * (0.02 + (0.16 * relative_core_depth))),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    scale = np.divide(
+        core_luminance,
+        np.maximum(luminance, EPSILON),
+        out=np.ones_like(core_luminance, dtype=np.float32),
+        where=luminance > EPSILON,
+    )
+    scaled = np.clip(linear * scale[..., None], 0.0, 1.0).astype(np.float32, copy=False)
+
+    if dust_colour > 0.0:
+        gray = np.repeat(core_luminance[..., None], 3, axis=-1).astype(np.float32, copy=False)
+        saturation_scale = 1.0 + (
+            dust_colour
+            * 0.90
+            * veil_mask[..., None]
+            * bright_protection[..., None]
+        )
+        scaled = np.clip(
+            gray + ((scaled - gray) * saturation_scale),
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+
+    if softness > 0.0:
+        blurred = box_blur(linear_to_srgb(scaled), smoothing_radius)
+        blurred_linear = srgb_to_linear(
+            np.clip(blurred, 0.0, 1.0).astype(np.float32, copy=False)
+        )
+        chroma_mix = (
+            0.08 * softness * veil_mask * bright_protection
+        ).astype(np.float32, copy=False)
+        scaled = np.clip(
+            (scaled * (1.0 - chroma_mix[..., None])) + (blurred_linear * chroma_mix[..., None]),
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+
+    wet_mask = np.clip(weights * amount * process_mask, 0.0, 1.0).astype(np.float32, copy=False)
+    return apply_weighted_image_blend(current_rgb, scaled, wet_mask)
+
+
 def _rgb_hsv_planes(image_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     red = image_rgb[..., 0]
     green = image_rgb[..., 1]
@@ -476,7 +627,47 @@ def _apply_saturation_scale(rgb: np.ndarray, scale: float) -> np.ndarray:
     return np.asarray(scaled, dtype=np.float32)
 
 
-def _map_faux_palette(current_rgb: np.ndarray, definition: FauxPaletteDefinition) -> np.ndarray:
+def _faux_palette_component_multipliers(
+    palette: str,
+    definition: FauxPaletteDefinition,
+    colour_balance: dict[str, float] | None,
+) -> tuple[tuple[float, float, float, float], bool]:
+    supported = FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS.get(palette, ())
+    if not supported:
+        return (1.0, 1.0, 1.0, 1.0), True
+    if colour_balance is None:
+        colour_balance = {}
+    resolved = {key: float(colour_balance.get(key, 100.0)) / 100.0 for key in supported}
+    if max(resolved.values(), default=0.0) <= EPSILON:
+        return (1.0, 1.0, 1.0, 1.0), False
+
+    component_totals = np.zeros(4, dtype=np.float32)
+    component_weights = np.zeros(4, dtype=np.float32)
+    for control in definition.colour_controls:
+        multiplier = resolved.get(control.key, 1.0)
+        weights = np.asarray(control.component_weights, dtype=np.float32)
+        component_totals += weights * multiplier
+        component_weights += weights
+    multipliers = np.divide(
+        component_totals,
+        np.maximum(component_weights, EPSILON),
+        out=np.ones_like(component_totals),
+        where=component_weights > EPSILON,
+    ).astype(np.float32, copy=False)
+    return (
+        float(multipliers[0]),
+        float(multipliers[1]),
+        float(multipliers[2]),
+        float(multipliers[3]),
+    ), True
+
+
+def _map_faux_palette(
+    current_rgb: np.ndarray,
+    definition: FauxPaletteDefinition,
+    *,
+    component_multipliers: tuple[float, float, float, float],
+) -> np.ndarray:
     red = current_rgb[..., 0].astype(np.float32, copy=False)
     green = current_rgb[..., 1].astype(np.float32, copy=False)
     blue = current_rgb[..., 2].astype(np.float32, copy=False)
@@ -543,18 +734,23 @@ def _map_faux_palette(current_rgb: np.ndarray, definition: FauxPaletteDefinition
     red_target = np.asarray(definition.red_target, dtype=np.float32)
     cool_target = np.asarray(definition.cool_target, dtype=np.float32)
     neutral_target = np.asarray(definition.neutral_target, dtype=np.float32)
+    warm_multiplier, red_multiplier, cool_multiplier, neutral_multiplier = component_multipliers
+    warm_weight = definition.warm_weight * warm_multiplier
+    red_weight = definition.red_weight * red_multiplier
+    cool_weight = definition.cool_weight * cool_multiplier
+    neutral_weight = neutral_multiplier
 
     numerator = (
-        (warm_target * warm_proxy[..., None] * definition.warm_weight)
-        + (red_target * red_proxy[..., None] * definition.red_weight)
-        + (cool_target * cool_proxy[..., None] * definition.cool_weight)
-        + (neutral_target * neutral_proxy[..., None])
+        (warm_target * warm_proxy[..., None] * warm_weight)
+        + (red_target * red_proxy[..., None] * red_weight)
+        + (cool_target * cool_proxy[..., None] * cool_weight)
+        + (neutral_target * neutral_proxy[..., None] * neutral_weight)
     ).astype(np.float32, copy=False)
     denominator = (
-        (warm_proxy * definition.warm_weight)
-        + (red_proxy * definition.red_weight)
-        + (cool_proxy * definition.cool_weight)
-        + neutral_proxy
+        (warm_proxy * warm_weight)
+        + (red_proxy * red_weight)
+        + (cool_proxy * cool_weight)
+        + (neutral_proxy * neutral_weight)
     )[..., None]
     mapped = np.divide(
         numerator,
@@ -590,6 +786,7 @@ def apply_faux_palette(
     palette: str,
     amount: float,
     preserve_brightness: bool,
+    colour_balance: dict[str, float] | None = None,
 ) -> np.ndarray:
     clamped_amount = max(0.0, min(1.0, amount))
     if clamped_amount <= EPSILON:
@@ -597,10 +794,21 @@ def apply_faux_palette(
     definition = FAUX_PALETTES.get(palette)
     if definition is None:
         raise ValueError(f"unsupported faux palette: {palette}")
+    component_multipliers, has_active_colour = _faux_palette_component_multipliers(
+        palette,
+        definition,
+        colour_balance,
+    )
+    if not has_active_colour:
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
 
     current_linear = srgb_to_linear(current_rgb)
     original_luminance = np.tensordot(current_linear, LINEAR_LUMA, axes=([-1], [0]))
-    mapped_srgb = _map_faux_palette(current_rgb, definition)
+    mapped_srgb = _map_faux_palette(
+        current_rgb,
+        definition,
+        component_multipliers=component_multipliers,
+    )
     mapped_linear = srgb_to_linear(mapped_srgb)
     if preserve_brightness:
         mapped_linear = _preserve_luminance(mapped_linear, original_luminance)

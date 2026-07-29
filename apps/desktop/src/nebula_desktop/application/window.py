@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from project_model import PrintRenderProfile, ScreenRenderProfile
 from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt, QTimer, Signal
@@ -254,6 +255,7 @@ class MainWindow(QMainWindow):
         self._adjustment_render_timer.setSingleShot(True)
         self._adjustment_render_timer.setInterval(300)
         self._adjustment_render_timer.timeout.connect(self._request_deferred_adjustment_render)
+        self._palette_balance_expanded_by_rule_id: dict[str, bool] = {}
         self.view_model = ProjectEditorViewModel(self)
         self._build_ui()
         self._connect_signals()
@@ -706,6 +708,57 @@ class MainWindow(QMainWindow):
         self.secondary_slider = QSlider(Qt.Orientation.Horizontal)
         self.secondary_value_label = QLabel("")
         self.option_checkbox = QCheckBox("Preserve Brightness")
+        self.palette_balance_title_label = QLabel("Colour Balance")
+        self.palette_balance_title_label.setStyleSheet("font-weight: 600;")
+        self.palette_balance_toggle_button = QPushButton("▸")
+        self.palette_balance_toggle_button.setCheckable(True)
+        self.palette_balance_toggle_button.setChecked(False)
+        self.palette_balance_toggle_button.setFixedWidth(32)
+        self.palette_balance_toggle_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.palette_balance_helper_label = _build_muted_wrapped_label(
+            "Adjusts the strength of the main colours inside the full palette effect. "
+            "Amount still controls how much of the complete palette is mixed into the image."
+        )
+        palette_balance_header = QHBoxLayout()
+        palette_balance_header.setContentsMargins(0, 0, 0, 0)
+        palette_balance_header.setSpacing(8)
+        palette_balance_header.addWidget(self.palette_balance_title_label)
+        palette_balance_header.addStretch(1)
+        palette_balance_header.addWidget(self.palette_balance_toggle_button)
+        self.palette_balance_controls_widget = QWidget(self)
+        self.palette_balance_controls_layout = QVBoxLayout(self.palette_balance_controls_widget)
+        self.palette_balance_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.palette_balance_controls_layout.setSpacing(8)
+        self.reset_palette_balance_button = QPushButton("Reset Colour Balance")
+        self.palette_balance_section = QWidget(self)
+        palette_balance_section_layout = QVBoxLayout(self.palette_balance_section)
+        palette_balance_section_layout.setContentsMargins(0, 0, 0, 0)
+        palette_balance_section_layout.setSpacing(8)
+        palette_balance_section_layout.addLayout(palette_balance_header)
+        palette_balance_section_layout.addWidget(self.palette_balance_helper_label)
+        palette_balance_section_layout.addWidget(self.palette_balance_controls_widget)
+        palette_balance_section_layout.addWidget(self.reset_palette_balance_button)
+
+        self.extra_adjustment_controls_title = QLabel("Dark Nebula Controls")
+        self.extra_adjustment_controls_title.setStyleSheet("font-weight: 600;")
+        self.extra_adjustment_controls_helper = _build_muted_wrapped_label(
+            "Fine-tunes how the dark-nebula treatment lifts the veil, preserves the core, "
+            "and strengthens existing dust colour."
+        )
+        self.extra_adjustment_controls_widget = QWidget(self)
+        self.extra_adjustment_controls_layout = QVBoxLayout(self.extra_adjustment_controls_widget)
+        self.extra_adjustment_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_adjustment_controls_layout.setSpacing(8)
+        self.extra_adjustment_controls_section = QWidget(self)
+        extra_controls_section_layout = QVBoxLayout(self.extra_adjustment_controls_section)
+        extra_controls_section_layout.setContentsMargins(0, 0, 0, 0)
+        extra_controls_section_layout.setSpacing(8)
+        extra_controls_section_layout.addWidget(self.extra_adjustment_controls_title)
+        extra_controls_section_layout.addWidget(self.extra_adjustment_controls_helper)
+        extra_controls_section_layout.addWidget(self.extra_adjustment_controls_widget)
 
         self.scope_title_label = QLabel("Apply in")
         self.scope_title_label.setStyleSheet("font-weight: 600;")
@@ -730,6 +783,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.secondary_slider)
         layout.addWidget(self.secondary_value_label)
         layout.addWidget(self.option_checkbox)
+        layout.addWidget(self.palette_balance_section)
+        layout.addWidget(self.extra_adjustment_controls_section)
         layout.addWidget(self.scope_title_label)
         layout.addWidget(self.apply_everywhere_checkbox)
         layout.addWidget(self.region_scope_list, 1)
@@ -780,16 +835,29 @@ class MainWindow(QMainWindow):
         )
 
         self.dark_dust_enabled_checkbox = QCheckBox("Enabled")
+        self.dark_dust_view_selector = QComboBox()
+        self.dark_dust_display_selector = QComboBox()
+        self.dark_dust_solo_button = QPushButton("Solo Dark Dust Mask")
+        self.dark_dust_coverage_label = _build_muted_wrapped_label("")
         self.dark_dust_sensitivity_input = QDoubleSpinBox()
         self.dark_dust_structure_size_input = QDoubleSpinBox()
         self.dark_dust_background_protection_input = QDoubleSpinBox()
         self.dark_dust_softness_input = QDoubleSpinBox()
+        self.dark_dust_veil_strength_input = QDoubleSpinBox()
+        self.dark_dust_core_strength_input = QDoubleSpinBox()
+        self.dark_dust_veil_core_balance_input = QDoubleSpinBox()
         self.reset_dark_dust_button = QPushButton("Reset Dark Dust Mask")
         for widget in [
+            self.dark_dust_view_selector,
+            self.dark_dust_display_selector,
+            self.dark_dust_solo_button,
             self.dark_dust_sensitivity_input,
             self.dark_dust_structure_size_input,
             self.dark_dust_background_protection_input,
             self.dark_dust_softness_input,
+            self.dark_dust_veil_strength_input,
+            self.dark_dust_core_strength_input,
+            self.dark_dust_veil_core_balance_input,
             self.reset_dark_dust_button,
         ]:
             _allow_horizontal_shrink(widget)
@@ -799,9 +867,18 @@ class MainWindow(QMainWindow):
             ("Structure Size", self.dark_dust_structure_size_input),
             ("Background Protection", self.dark_dust_background_protection_input),
             ("Softness", self.dark_dust_softness_input),
+            ("Veil Detection", self.dark_dust_veil_strength_input),
+            ("Core Detection", self.dark_dust_core_strength_input),
+            ("Veil / Core Balance", self.dark_dust_veil_core_balance_input),
         ]
         body_layout.addWidget(helper)
         body_layout.addWidget(self.dark_dust_enabled_checkbox)
+        body_layout.addWidget(QLabel("Overlay View"))
+        body_layout.addWidget(self.dark_dust_view_selector)
+        body_layout.addWidget(QLabel("Display Mode"))
+        body_layout.addWidget(self.dark_dust_display_selector)
+        body_layout.addWidget(self.dark_dust_solo_button)
+        body_layout.addWidget(self.dark_dust_coverage_label)
         for label, widget in controls:
             caption = QLabel(label)
             caption.setStyleSheet("font-weight: 600;")
@@ -980,6 +1057,10 @@ class MainWindow(QMainWindow):
         self.secondary_slider.sliderReleased.connect(self._on_adjustment_slider_released)
         self.secondary_slider.valueChanged.connect(self._on_secondary_value_changed)
         self.option_checkbox.toggled.connect(self.view_model.set_selected_adjustment_option_enabled)
+        self.palette_balance_toggle_button.toggled.connect(self._on_palette_balance_toggled)
+        self.reset_palette_balance_button.clicked.connect(
+            self.view_model.reset_selected_adjustment_palette_balance
+        )
         self.apply_everywhere_checkbox.toggled.connect(self.view_model.set_selected_adjustment_apply_everywhere)
         self.region_scope_list.itemChanged.connect(self._on_region_scope_item_changed)
 
@@ -1000,6 +1081,18 @@ class MainWindow(QMainWindow):
             self.view_model.set_dark_dust_background_protection
         )
         self.dark_dust_softness_input.valueChanged.connect(self.view_model.set_dark_dust_softness)
+        self.dark_dust_veil_strength_input.valueChanged.connect(self.view_model.set_dark_dust_veil_strength)
+        self.dark_dust_core_strength_input.valueChanged.connect(self.view_model.set_dark_dust_core_strength)
+        self.dark_dust_veil_core_balance_input.valueChanged.connect(
+            self.view_model.set_dark_dust_veil_core_balance
+        )
+        self.dark_dust_view_selector.currentIndexChanged.connect(self._on_dark_dust_view_changed)
+        self.dark_dust_display_selector.currentIndexChanged.connect(
+            self._on_dark_dust_display_changed
+        )
+        self.dark_dust_solo_button.clicked.connect(
+            lambda: self.view_model.set_solo_dark_dust_mask(True)
+        )
         self.reset_dark_dust_button.clicked.connect(self.view_model.reset_dark_dust_settings)
         self.dark_dust_toggle_button.toggled.connect(self._on_dark_dust_toggled)
 
@@ -1325,6 +1418,10 @@ class MainWindow(QMainWindow):
             "Add Natural Bi-colour adjustment",
             lambda: self.view_model.create_adjustment("natural_bicolour"),
         )
+        menu.addAction(
+            "Add Dark Nebula Processing adjustment",
+            lambda: self.view_model.create_adjustment("dark_nebula_processing"),
+        )
         menu.exec(self.add_adjustment_button.mapToGlobal(self.add_adjustment_button.rect().bottomLeft()))
 
     def _on_project_loaded(self, project_name: str) -> None:
@@ -1413,14 +1510,48 @@ class MainWindow(QMainWindow):
         settings = self.view_model.dark_dust_settings()
         with QSignalBlocker(self.dark_dust_enabled_checkbox):
             self.dark_dust_enabled_checkbox.setChecked(settings.enabled)
-        for widget, value in [
+        with QSignalBlocker(self.dark_dust_view_selector):
+            self.dark_dust_view_selector.clear()
+            for label, value in [
+                ("Final Mask", "final_mask"),
+                ("Veil Mask", "veil_mask"),
+                ("Core Mask", "core_mask"),
+                ("Relative Darkness", "relative_darkness"),
+                ("Local Illumination", "local_illumination"),
+                ("Background Support", "background_support"),
+            ]:
+                self.dark_dust_view_selector.addItem(label, value)
+            view_index = self.dark_dust_view_selector.findData(
+                self.view_model.dark_dust_overlay_view()
+            )
+            self.dark_dust_view_selector.setCurrentIndex(max(0, view_index))
+        with QSignalBlocker(self.dark_dust_display_selector):
+            self.dark_dust_display_selector.clear()
+            for label, value in [("Overlay on Image", "overlay"), ("Mask Only", "mask")]:
+                self.dark_dust_display_selector.addItem(label, value)
+            self.dark_dust_display_selector.setCurrentIndex(
+                max(
+                    0,
+                    self.dark_dust_display_selector.findData(
+                        self.view_model.dark_dust_overlay_display()
+                    ),
+                )
+            )
+        self.dark_dust_coverage_label.setText(
+            f"Dark Dust Coverage: {self.view_model.dark_dust_coverage_percent():.1f}%"
+        )
+        numeric_settings: list[tuple[QDoubleSpinBox, float]] = [
             (self.dark_dust_sensitivity_input, settings.sensitivity),
             (self.dark_dust_structure_size_input, settings.structure_size),
             (self.dark_dust_background_protection_input, settings.background_protection),
             (self.dark_dust_softness_input, settings.softness),
-        ]:
+            (self.dark_dust_veil_strength_input, settings.veil_strength),
+            (self.dark_dust_core_strength_input, settings.core_strength),
+            (self.dark_dust_veil_core_balance_input, settings.veil_core_balance),
+        ]
+        for widget, numeric_value in numeric_settings:
             with QSignalBlocker(widget):
-                widget.setValue(value)
+                widget.setValue(numeric_value)
 
     def _refresh_changes(self) -> None:
         changes = self.view_model.unsaved_changes()
@@ -1458,6 +1589,8 @@ class MainWindow(QMainWindow):
             self.secondary_slider.setVisible(False)
             self.secondary_value_label.setVisible(False)
             self.option_checkbox.setVisible(False)
+            self.palette_balance_section.setVisible(False)
+            self.extra_adjustment_controls_section.setVisible(False)
             self.scope_title_label.setVisible(False)
             self.apply_everywhere_checkbox.setVisible(False)
             self.region_scope_list.setVisible(False)
@@ -1556,6 +1689,15 @@ class MainWindow(QMainWindow):
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
+            elif summary.transform_type == "dark_nebula_processing":
+                spin_value = max(
+                    _PALETTE_UI_MIN,
+                    min(_PALETTE_UI_MAX, summary.primary_value * 100.0),
+                )
+                spin_range = (_PALETTE_UI_MIN, _PALETTE_UI_MAX)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             else:
                 spin_value = max(
                     _MULTIPLIER_UI_MIN,
@@ -1613,6 +1755,8 @@ class MainWindow(QMainWindow):
             self.option_checkbox.setText(summary.option_label)
             with QSignalBlocker(self.option_checkbox):
                 self.option_checkbox.setChecked(summary.option_enabled)
+        self._refresh_palette_balance_section(summary)
+        self._refresh_extra_adjustment_controls(summary)
 
         self.scope_title_label.setVisible(True)
         self.apply_everywhere_checkbox.setVisible(True)
@@ -1627,6 +1771,62 @@ class MainWindow(QMainWindow):
         self.reset_adjustment_button.setEnabled(True)
         self.move_earlier_button.setEnabled(True)
         self.move_later_button.setEnabled(True)
+
+    def _refresh_extra_adjustment_controls(self, summary: AdjustmentSummary) -> None:
+        self.extra_adjustment_controls_section.setVisible(bool(summary.extra_numeric_controls))
+        if not summary.extra_numeric_controls:
+            self._clear_layout(self.extra_adjustment_controls_layout)
+            return
+
+        self._clear_layout(self.extra_adjustment_controls_layout)
+        for control in summary.extra_numeric_controls:
+            label = QLabel(control.label)
+            label.setStyleSheet("font-weight: 600;")
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(int(round(control.value * 100.0)))
+            slider.setToolTip(control.helper_text)
+            slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
+            slider.sliderReleased.connect(self._on_adjustment_slider_released)
+
+            input_widget = QDoubleSpinBox()
+            input_widget.setDecimals(0)
+            input_widget.setRange(0.0, 100.0)
+            input_widget.setSingleStep(1.0)
+            input_widget.setSuffix("%")
+            input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
+            input_widget.setKeyboardTracking(False)
+            input_widget.setValue(control.value * 100.0)
+            input_widget.setToolTip(control.helper_text)
+            _allow_horizontal_shrink(input_widget)
+
+            row = QWidget(self.extra_adjustment_controls_widget)
+            _allow_panel_horizontal_shrink(row)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(slider, 1)
+            row_layout.addWidget(input_widget)
+
+            slider.valueChanged.connect(
+                lambda value, key=control.key, widget=input_widget:
+                self._on_extra_control_slider_changed(
+                    key,
+                    value,
+                    widget,
+                )
+            )
+            input_widget.valueChanged.connect(
+                lambda value, key=control.key, widget=slider: self._on_extra_control_input_changed(
+                    key,
+                    value,
+                    widget,
+                )
+            )
+            input_widget.editingFinished.connect(self._schedule_adjustment_render)
+
+            self.extra_adjustment_controls_layout.addWidget(label)
+            self.extra_adjustment_controls_layout.addWidget(row)
 
     def _refresh_region_scope_list(self, summary: AdjustmentSummary) -> None:
         blocker = QSignalBlocker(self.region_scope_list)
@@ -1645,6 +1845,91 @@ class MainWindow(QMainWindow):
         self.region_scope_list.setEnabled(
             summary.editable and not self.apply_everywhere_checkbox.isChecked()
         )
+
+    def _clear_layout(self, layout: QVBoxLayout | QHBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item is None:
+                continue
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_layout(cast(QVBoxLayout | QHBoxLayout, child_layout))
+
+    def _refresh_palette_balance_section(self, summary: AdjustmentSummary) -> None:
+        is_palette = summary.transform_type == "faux_palette"
+        has_controls = bool(summary.palette_balance_controls)
+        self.palette_balance_section.setVisible(is_palette and has_controls)
+        if not (is_palette and has_controls):
+            return
+
+        expanded = self._palette_balance_expanded_by_rule_id.get(summary.rule_id, False)
+        with QSignalBlocker(self.palette_balance_toggle_button):
+            self.palette_balance_toggle_button.setChecked(expanded)
+        self._set_palette_balance_collapsed(not expanded)
+        self._clear_layout(self.palette_balance_controls_layout)
+
+        for control in summary.palette_balance_controls:
+            label = QLabel(control.label)
+            label.setStyleSheet("font-weight: 600;")
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 200)
+            slider.setValue(int(round(control.value)))
+            slider.setToolTip(control.helper_text)
+            slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
+            slider.sliderReleased.connect(self._on_adjustment_slider_released)
+
+            input_widget = QDoubleSpinBox()
+            input_widget.setDecimals(0)
+            input_widget.setRange(0.0, 200.0)
+            input_widget.setSingleStep(1.0)
+            input_widget.setSuffix("%")
+            input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
+            input_widget.setKeyboardTracking(False)
+            input_widget.setValue(control.value)
+            input_widget.setToolTip(control.helper_text)
+            _allow_horizontal_shrink(input_widget)
+
+            row = QWidget(self.palette_balance_controls_widget)
+            _allow_panel_horizontal_shrink(row)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(slider, 1)
+            row_layout.addWidget(input_widget)
+
+            slider.valueChanged.connect(
+                self._make_palette_balance_slider_handler(control.key, input_widget)
+            )
+            input_widget.valueChanged.connect(
+                self._make_palette_balance_input_handler(control.key, slider)
+            )
+            input_widget.editingFinished.connect(self._schedule_adjustment_render)
+
+            self.palette_balance_controls_layout.addWidget(label)
+            self.palette_balance_controls_layout.addWidget(row)
+
+    def _make_palette_balance_slider_handler(
+        self,
+        key: str,
+        input_widget: QDoubleSpinBox,
+    ) -> Callable[[int], None]:
+        def handler(value: int) -> None:
+            self._on_palette_balance_slider_changed(key, value, input_widget)
+
+        return handler
+
+    def _make_palette_balance_input_handler(
+        self,
+        key: str,
+        slider: QSlider,
+    ) -> Callable[[float], None]:
+        def handler(value: float) -> None:
+            self._on_palette_balance_input_changed(key, value, slider)
+
+        return handler
 
     def _apply_region_summary(self, summary: RegionSummary | None) -> None:
         if summary is None:
@@ -1835,11 +2120,79 @@ class MainWindow(QMainWindow):
         if isinstance(target_id, str):
             self.view_model.set_selected_adjustment_target(target_id)
 
+    def _on_dark_dust_view_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        value = self.dark_dust_view_selector.itemData(index)
+        if isinstance(value, str):
+            self.view_model.set_dark_dust_overlay_view(cast(Any, value))
+
+    def _on_dark_dust_display_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        value = self.dark_dust_display_selector.itemData(index)
+        if isinstance(value, str):
+            self.view_model.set_dark_dust_overlay_display(cast(Any, value))
+
     def _on_secondary_value_changed(self, value: int) -> None:
         render = not self.view_model.is_adjustment_interacting
         self.view_model.set_selected_adjustment_secondary_value(value / 100.0, render=render)
         if render:
             self._schedule_adjustment_render()
+
+    def _on_palette_balance_slider_changed(
+        self,
+        key: str,
+        value: int,
+        input_widget: QDoubleSpinBox,
+    ) -> None:
+        with QSignalBlocker(input_widget):
+            input_widget.setValue(float(value))
+        self.view_model.set_selected_adjustment_palette_balance(
+            key,
+            float(value),
+            render=not self.view_model.is_adjustment_interacting,
+        )
+
+    def _on_palette_balance_input_changed(
+        self,
+        key: str,
+        value: float,
+        slider: QSlider,
+    ) -> None:
+        with QSignalBlocker(slider):
+            slider.setValue(int(round(value)))
+        self.view_model.set_selected_adjustment_palette_balance(key, value, render=False)
+        self._schedule_adjustment_render()
+
+    def _on_extra_control_slider_changed(
+        self,
+        key: str,
+        value: int,
+        input_widget: QDoubleSpinBox,
+    ) -> None:
+        with QSignalBlocker(input_widget):
+            input_widget.setValue(float(value))
+        self.view_model.set_selected_adjustment_extra_numeric_control(
+            key,
+            value / 100.0,
+            render=not self.view_model.is_adjustment_interacting,
+        )
+
+    def _on_extra_control_input_changed(
+        self,
+        key: str,
+        value: float,
+        slider: QSlider,
+    ) -> None:
+        with QSignalBlocker(slider):
+            slider.setValue(int(round(value)))
+        self.view_model.set_selected_adjustment_extra_numeric_control(
+            key,
+            value / 100.0,
+            render=False,
+        )
+        self._schedule_adjustment_render()
 
     def _on_adjustment_slider_pressed(self) -> None:
         self._adjustment_render_timer.stop()
@@ -1862,6 +2215,8 @@ class MainWindow(QMainWindow):
         elif summary.transform_type == "brightness":
             normalized = _brightness_ui_to_amount(value)
         elif summary.transform_type == "faux_palette":
+            normalized = value / 100.0
+        elif summary.transform_type == "dark_nebula_processing":
             normalized = value / 100.0
         else:
             normalized = 1.0 + (value / 100.0)
@@ -2014,11 +2369,26 @@ class MainWindow(QMainWindow):
     def _on_dark_dust_toggled(self, expanded: bool) -> None:
         self._set_dark_dust_collapsed(not expanded)
 
+    def _on_palette_balance_toggled(self, expanded: bool) -> None:
+        summary = self.view_model.selected_adjustment_summary()
+        if summary is not None:
+            self._palette_balance_expanded_by_rule_id[summary.rule_id] = expanded
+        self._set_palette_balance_collapsed(not expanded)
+
     def _set_dark_dust_collapsed(self, collapsed: bool) -> None:
         self.dark_dust_body.setVisible(not collapsed)
         self.dark_dust_toggle_button.setText("▸" if collapsed else "▾")
         self.dark_dust_toggle_button.setToolTip(
             "Expand Dark Dust Mask" if collapsed else "Collapse Dark Dust Mask"
+        )
+
+    def _set_palette_balance_collapsed(self, collapsed: bool) -> None:
+        self.palette_balance_helper_label.setVisible(not collapsed)
+        self.palette_balance_controls_widget.setVisible(not collapsed)
+        self.reset_palette_balance_button.setVisible(not collapsed)
+        self.palette_balance_toggle_button.setText("▸" if collapsed else "▾")
+        self.palette_balance_toggle_button.setToolTip(
+            "Expand Colour Balance" if collapsed else "Collapse Colour Balance"
         )
 
     def _configure_left_panel_action_icons(self) -> None:

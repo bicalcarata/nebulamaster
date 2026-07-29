@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from project_model import (
+    FAUX_PALETTE_COLOUR_BALANCE_LABELS,
     BrightnessTransform,
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    DarkNebulaProcessingTransform,
     DeclarativeRule,
     DiffExplanationEntry,
     DiffProjectIdentity,
@@ -216,6 +218,10 @@ def _faux_palette_percentage(value: float) -> str:
     return f"{round(value * 100)}%"
 
 
+def _unit_percentage(value: float) -> str:
+    return f"{round(value * 100)}%"
+
+
 def _faux_palette_name(palette: str) -> str:
     return {
         "hubble": "Faux Hubble",
@@ -224,6 +230,36 @@ def _faux_palette_name(palette: str) -> str:
         "gold_cyan": "Gold & Cyan",
         "natural_bicolour": "Natural Bi-colour",
     }.get(palette, palette.replace("_", " ").title())
+
+
+def _faux_palette_balance_summary(
+    name: str,
+    old_transform: FauxPaletteTransform,
+    new_transform: FauxPaletteTransform,
+) -> str | None:
+    if old_transform.palette != new_transform.palette:
+        return None
+    old_balance = old_transform.supported_colour_balance()
+    new_balance = new_transform.supported_colour_balance()
+    changed_keys = [
+        key
+        for key in old_balance
+        if old_balance.get(key) != new_balance.get(key)
+    ]
+    if not changed_keys:
+        return None
+    fragments = [
+        (
+            f"{FAUX_PALETTE_COLOUR_BALANCE_LABELS[key]} "
+            f"from {round(old_balance[key])}% to {round(new_balance[key])}%"
+        )
+        for key in changed_keys
+    ]
+    if len(fragments) == 1:
+        details = fragments[0]
+    else:
+        details = ", ".join(fragments[:-1]) + f" and {fragments[-1]}"
+    return f"Changed {name} colour balance: {details}."
 
 
 def _format_range_summary(
@@ -793,7 +829,14 @@ def _compare_rules(
             elif isinstance(rule_a.transform, FauxPaletteTransform) and isinstance(
                 rule_b.transform, FauxPaletteTransform
             ):
-                if (
+                balance_summary = _faux_palette_balance_summary(
+                    rule_b.name or rule_b.id,
+                    rule_a.transform,
+                    rule_b.transform,
+                )
+                if balance_summary is not None:
+                    summary = balance_summary
+                elif (
                     rule_a.transform.palette == rule_b.transform.palette
                     and rule_a.transform.amount != rule_b.transform.amount
                     and rule_a.transform.preserve_brightness
@@ -832,6 +875,55 @@ def _compare_rules(
                     else "reduced"
                 )
                 summary = f"{rule_b.name} smoothing was {direction}."
+            elif isinstance(rule_a.transform, DarkNebulaProcessingTransform) and isinstance(
+                rule_b.transform, DarkNebulaProcessingTransform
+            ):
+                if rule_a.transform.amount != rule_b.transform.amount:
+                    summary = (
+                        f"Changed {rule_b.name} amount from "
+                        f"{_unit_percentage(rule_a.transform.amount)} to "
+                        f"{_unit_percentage(rule_b.transform.amount)}."
+                    )
+                elif rule_a.transform.reveal_dust != rule_b.transform.reveal_dust:
+                    summary = (
+                        f"Changed Reveal Dust from "
+                        f"{_unit_percentage(rule_a.transform.reveal_dust)} to "
+                        f"{_unit_percentage(rule_b.transform.reveal_dust)}."
+                    )
+                elif rule_a.transform.dust_contrast != rule_b.transform.dust_contrast:
+                    summary = (
+                        f"Changed Dust Contrast from "
+                        f"{_unit_percentage(rule_a.transform.dust_contrast)} to "
+                        f"{_unit_percentage(rule_b.transform.dust_contrast)}."
+                    )
+                elif rule_a.transform.core_depth != rule_b.transform.core_depth:
+                    summary = (
+                        f"Changed Core Depth from "
+                        f"{_unit_percentage(rule_a.transform.core_depth)} to "
+                        f"{_unit_percentage(rule_b.transform.core_depth)}."
+                    )
+                elif rule_a.transform.dust_colour != rule_b.transform.dust_colour:
+                    summary = (
+                        f"Changed Dust Colour from "
+                        f"{_unit_percentage(rule_a.transform.dust_colour)} to "
+                        f"{_unit_percentage(rule_b.transform.dust_colour)}."
+                    )
+                elif rule_a.transform.softness != rule_b.transform.softness:
+                    summary = (
+                        f"Changed Softness from "
+                        f"{_unit_percentage(rule_a.transform.softness)} to "
+                        f"{_unit_percentage(rule_b.transform.softness)}."
+                    )
+                elif (
+                    rule_a.transform.preserve_bright_areas
+                    != rule_b.transform.preserve_bright_areas
+                ):
+                    state = (
+                        "enabled" if rule_b.transform.preserve_bright_areas else "disabled"
+                    )
+                    summary = f"{rule_b.name} bright-area protection was {state}."
+                else:
+                    summary = f"{rule_b.name} processing changed."
             else:
                 summary = f"{rule_b.name} transformation changed."
             modified.append(

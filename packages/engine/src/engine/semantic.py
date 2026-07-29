@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from project_model import DarkDustSettings
 
 from .selection import box_blur, compute_luminance
+
+
+@dataclass(frozen=True)
+class DarkDustAnalysis:
+    final_mask: np.ndarray
+    veil_mask: np.ndarray
+    core_mask: np.ndarray
+    relative_darkness: np.ndarray
+    local_illumination: np.ndarray
+    background_support: np.ndarray
+
+    @property
+    def coverage_percent(self) -> float:
+        return float(np.mean(self.final_mask) * 100.0)
 
 
 def star_influence(image_rgb: np.ndarray) -> np.ndarray:
@@ -35,13 +51,63 @@ def star_influence(image_rgb: np.ndarray) -> np.ndarray:
     return np.asarray(weights.astype(np.float32, copy=False), dtype=np.float32)
 
 
-def dark_dust_influence(
+def _radius_from_fraction(
+    shorter: int,
+    fraction: float,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    radius = int(round(shorter * fraction))
+    return max(minimum, min(maximum, radius))
+
+
+def _weighted_blur(
+    plane: np.ndarray,
+    weights: np.ndarray,
+    radius_pixels: int,
+) -> np.ndarray:
+    weighted_plane = box_blur(
+        np.repeat((plane * weights)[..., None], 3, axis=-1),
+        radius_pixels,
+    )[..., 0]
+    blurred_weights = box_blur(
+        np.repeat(weights[..., None], 3, axis=-1),
+        radius_pixels,
+    )[..., 0]
+    averaged = np.divide(
+        weighted_plane,
+        np.maximum(blurred_weights, 1e-6),
+        out=np.zeros_like(weighted_plane, dtype=np.float32),
+        where=blurred_weights > 1e-6,
+    )
+    return np.asarray(averaged, dtype=np.float32)
+
+
+def _smoothstep(value: np.ndarray, edge0: float, edge1: float) -> np.ndarray:
+    if edge1 <= edge0:
+        binary = np.where(value >= edge1, 1.0, 0.0).astype(np.float32)
+        return np.asarray(binary, dtype=np.float32)
+    t = np.clip((value - edge0) / (edge1 - edge0), 0.0, 1.0).astype(np.float32, copy=False)
+    smoothed = (t * t * (3.0 - 2.0 * t)).astype(np.float32, copy=False)
+    return np.asarray(smoothed, dtype=np.float32)
+
+
+def analyze_dark_dust(
     image_rgb: np.ndarray,
     settings: DarkDustSettings | None = None,
-) -> np.ndarray:
+) -> DarkDustAnalysis:
     resolved = settings or DarkDustSettings()
     if not resolved.enabled:
-        return np.zeros(image_rgb.shape[:2], dtype=np.float32)
+        zero = np.zeros(image_rgb.shape[:2], dtype=np.float32)
+        return DarkDustAnalysis(
+            final_mask=zero,
+            veil_mask=zero,
+            core_mask=zero,
+            relative_darkness=zero,
+            local_illumination=zero,
+            background_support=zero,
+        )
 
     height, width = image_rgb.shape[:2]
     shorter = min(height, width)
@@ -49,66 +115,172 @@ def dark_dust_influence(
     stars = star_influence(image_rgb)
     non_star = np.clip(1.0 - stars, 0.0, 1.0).astype(np.float32, copy=False)
 
-    structure_radius = max(3, int(round(shorter * resolved.structure_size)))
-    local_illumination = box_blur(
-        np.repeat(luminance[..., None], 3, axis=-1),
-        structure_radius,
-    )[..., 0].astype(np.float32, copy=False)
-    broad_illumination = box_blur(
-        np.repeat(luminance[..., None], 3, axis=-1),
-        max(structure_radius + 4, int(round(structure_radius * 4.0))),
-    )[..., 0].astype(np.float32, copy=False)
-    local_illumination = np.maximum(local_illumination, broad_illumination).astype(
+    structure = resolved.structure_size
+    medium_radius = _radius_from_fraction(
+        shorter,
+        0.008 + (0.040 * structure),
+        minimum=3,
+        maximum=max(6, int(round(shorter * 0.05))),
+    )
+    broad_radius = _radius_from_fraction(
+        shorter,
+        0.32 + (0.24 * structure),
+        minimum=max(medium_radius + 6, int(round(shorter * 0.24))),
+        maximum=max(24, int(round(shorter * 0.48))),
+    )
+    suppression_radius = max(1, int(round(medium_radius * 0.5)))
+    veil_feather_radius = max(
+        1,
+        int(round((medium_radius * 0.7) + (broad_radius * resolved.softness * 0.4))),
+    )
+    core_feather_radius = max(
+        1,
+        int(round((medium_radius * 0.35) + (medium_radius * resolved.softness * 0.25))),
+    )
+
+    medium_illumination = _weighted_blur(luminance, non_star, medium_radius)
+    broad_illumination = _weighted_blur(luminance, non_star, broad_radius)
+    local_illumination = np.maximum(medium_illumination, broad_illumination).astype(
         np.float32,
         copy=False,
     )
-    relative_darkness = np.clip(local_illumination - luminance, 0.0, 1.0).astype(
+
+    medium_relative_darkness = np.clip(
+        (medium_illumination - luminance) / np.maximum(medium_illumination, 1e-6),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    broad_relative_darkness = np.clip(
+        (broad_illumination - luminance) / np.maximum(broad_illumination, 1e-6),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    relative_darkness = np.maximum(medium_relative_darkness, broad_relative_darkness).astype(
         np.float32,
         copy=False,
     )
 
-    sensitivity_floor = max(0.0025, 0.055 * (1.0 - resolved.sensitivity))
-    sensitivity_span = max(0.01, 0.12 - (0.08 * resolved.sensitivity))
-    base = np.clip(
-        (relative_darkness - sensitivity_floor) / sensitivity_span,
+    low_frequency_structure = np.clip(
+        np.abs(medium_illumination - broad_illumination) / np.maximum(broad_illumination, 1e-6),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    local_variance = _weighted_blur(
+        np.abs(luminance - medium_illumination),
+        non_star,
+        max(1, int(round(medium_radius * 0.8))),
+    )
+
+    illumination_floor = 0.003 + (0.06 * resolved.background_protection)
+    illumination_support = _smoothstep(
+        broad_illumination,
+        illumination_floor,
+        illumination_floor + 0.10,
+    )
+    structure_support = _smoothstep(
+        low_frequency_structure,
+        0.0015,
+        0.022 + (0.050 * structure),
+    )
+    variance_support = _smoothstep(
+        local_variance,
+        0.0008,
+        0.012,
+    )
+    darkness_support = _smoothstep(
+        np.maximum(broad_relative_darkness, medium_relative_darkness),
+        0.010,
+        0.055,
+    )
+    non_star_support = np.power(non_star, 1.15).astype(np.float32, copy=False)
+    background_support = np.clip(
+        illumination_support
+        * np.maximum(np.maximum(structure_support, variance_support), darkness_support)
+        * non_star_support,
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    core_support = np.clip(
+        illumination_support
+        * np.maximum(darkness_support, np.maximum(variance_support, structure_support * 0.5))
+        * non_star_support,
         0.0,
         1.0,
     ).astype(np.float32, copy=False)
 
-    background_floor = 0.015 + (0.18 * resolved.background_protection)
-    background_span = max(0.02, 0.22 - (0.10 * resolved.background_protection))
-    background_guard = np.clip(
-        (local_illumination - background_floor) / background_span,
+    veil_signal = np.clip(
+        ((0.55 * broad_relative_darkness) + (0.45 * medium_relative_darkness))
+        * background_support
+        * (0.70 + (0.30 * structure_support)),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    core_signal = np.clip(
+        np.maximum(medium_relative_darkness, broad_relative_darkness)
+        * core_support
+        * (0.55 + (0.45 * np.maximum(veil_signal, structure_support))),
         0.0,
         1.0,
     ).astype(np.float32, copy=False)
 
-    isolation_radius = max(1, int(round(structure_radius * 0.35)))
-    clustered = box_blur(
-        np.repeat(base[..., None], 3, axis=-1),
-        isolation_radius,
-    )[..., 0].astype(np.float32, copy=False)
-    cluster_floor = 0.025 + (0.04 * (1.0 - resolved.sensitivity))
-    cluster_span = max(0.02, 0.16 - (0.05 * resolved.background_protection))
-    cluster_guard = np.clip(
-        (clustered - cluster_floor) / cluster_span,
+    veil_threshold = np.clip(
+        0.10 - (0.06 * resolved.sensitivity) - (0.04 * resolved.veil_strength),
+        0.01,
+        0.16,
+    )
+    core_threshold = np.clip(
+        0.08 - (0.05 * resolved.sensitivity) - (0.04 * resolved.core_strength),
+        0.015,
+        0.14,
+    )
+    edge_softness = 0.025 + (0.10 * resolved.softness)
+    veil_mask = _smoothstep(
+        veil_signal,
+        max(0.0, veil_threshold - edge_softness),
+        veil_threshold + edge_softness,
+    )
+    core_mask = _smoothstep(
+        core_signal,
+        max(0.0, core_threshold - edge_softness),
+        core_threshold + edge_softness,
+    )
+
+    veil_cluster = _weighted_blur(veil_mask, non_star, suppression_radius)
+    core_cluster = _weighted_blur(core_mask, non_star, suppression_radius)
+    veil_mask = np.where(veil_cluster >= 0.012, veil_mask, 0.0).astype(np.float32, copy=False)
+    core_mask = np.where(core_cluster >= 0.018, core_mask, 0.0).astype(np.float32, copy=False)
+
+    veil_mask = _weighted_blur(veil_mask, non_star, veil_feather_radius)
+    core_mask = _weighted_blur(core_mask, non_star, core_feather_radius)
+    core_mask = np.clip(
+        core_mask * (0.45 + (0.55 * np.maximum(veil_mask, structure_support))),
         0.0,
         1.0,
-    ).astype(np.float32, copy=False)
+    )
 
-    softened = box_blur(
-        np.repeat((base * background_guard * cluster_guard)[..., None], 3, axis=-1),
-        max(1, int(round(structure_radius * max(resolved.softness, 0.05)))),
-    )[..., 0].astype(np.float32, copy=False)
-    feather_floor = max(0.0, 0.18 - (0.12 * resolved.softness))
-    feathered = np.clip(
-        (softened - feather_floor) / max(0.04, 1.0 - feather_floor),
-        0.0,
-        1.0,
-    ).astype(np.float32, copy=False)
+    balance = resolved.veil_core_balance
+    veil_weight = resolved.veil_strength * (1.20 - (0.60 * balance))
+    core_weight = resolved.core_strength * (0.65 + (0.70 * balance))
+    final_mask = np.clip((veil_weight * veil_mask) + (core_weight * core_mask), 0.0, 1.0)
+    final_mask = np.clip(final_mask * non_star, 0.0, 1.0).astype(np.float32, copy=False)
+    veil_mask = np.clip(veil_mask * non_star, 0.0, 1.0).astype(np.float32, copy=False)
+    core_mask = np.clip(core_mask * non_star, 0.0, 1.0).astype(np.float32, copy=False)
 
-    result = np.clip(feathered * non_star, 0.0, 1.0).astype(np.float32, copy=False)
-    return np.asarray(result, dtype=np.float32)
+    return DarkDustAnalysis(
+        final_mask=np.asarray(final_mask, dtype=np.float32),
+        veil_mask=np.asarray(veil_mask, dtype=np.float32),
+        core_mask=np.asarray(core_mask, dtype=np.float32),
+        relative_darkness=np.asarray(relative_darkness, dtype=np.float32),
+        local_illumination=np.asarray(local_illumination, dtype=np.float32),
+        background_support=np.asarray(background_support, dtype=np.float32),
+    )
+
+
+def dark_dust_influence(
+    image_rgb: np.ndarray,
+    settings: DarkDustSettings | None = None,
+) -> np.ndarray:
+    return analyze_dark_dust(image_rgb, settings).final_mask
 
 
 def semantic_target_influence(

@@ -12,6 +12,7 @@ from engine import (
     PreviewImageResult,
     RenderResult,
     ValidationReport,
+    analyze_dark_dust,
     apply_crop,
     diff_bundles,
     load_valid_project_bundle,
@@ -25,11 +26,21 @@ from nebula_desktop.views.image_preview import ImageSample, OverlayRegion, Seman
 from nebula_desktop.workers.preview import PreviewRenderWorker
 from project_io import read_yaml_mapping, resolve_reference_path, write_yaml_mapping
 from project_model import (
+    FAUX_PALETTE_COLOUR_BALANCE_LABELS as PROJECT_FAUX_PALETTE_COLOUR_BALANCE_LABELS,
+)
+from project_model import (
+    FAUX_PALETTE_DISPLAY_NAMES as PROJECT_FAUX_PALETTE_DISPLAY_NAMES,
+)
+from project_model import (
+    FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS as PROJECT_FAUX_PALETTE_SUPPORTED_KEYS,
+)
+from project_model import (
     BrightnessTransform,
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
     DarkDustSettings,
+    DarkNebulaProcessingTransform,
     DeclarativeRule,
     FauxPaletteTransform,
     Feather,
@@ -73,16 +84,28 @@ AdjustmentKind = Literal[
     "foraxx",
     "gold_cyan",
     "natural_bicolour",
+    "dark_nebula_processing",
 ]
 SamplingPurpose = Literal["colour_point", "create_adjustment"]
 SemanticOverlaySelection = Literal["off", "stars", "nebula", "dark_dust"]
+DarkDustOverlayView = Literal[
+    "final_mask",
+    "veil_mask",
+    "core_mask",
+    "relative_darkness",
+    "local_illumination",
+    "background_support",
+]
+DarkDustOverlayDisplay = Literal["overlay", "mask"]
 
 FAUX_PALETTE_DISPLAY_NAMES: dict[str, str] = {
-    "hubble": "Faux Hubble",
-    "hoo": "Faux HOO",
-    "foraxx": "Foraxx-Inspired",
-    "gold_cyan": "Gold & Cyan",
-    "natural_bicolour": "Natural Bi-colour",
+    key: value for key, value in PROJECT_FAUX_PALETTE_DISPLAY_NAMES.items()
+}
+FAUX_PALETTE_COLOUR_BALANCE_LABELS: dict[str, str] = {
+    key: value for key, value in PROJECT_FAUX_PALETTE_COLOUR_BALANCE_LABELS.items()
+}
+FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS: dict[str, tuple[str, ...]] = {
+    key: value for key, value in PROJECT_FAUX_PALETTE_SUPPORTED_KEYS.items()
 }
 
 FAUX_PALETTE_HELPER_TEXT: dict[str, str] = {
@@ -123,6 +146,22 @@ FAUX_PALETTE_KIND_TO_ID: dict[AdjustmentKind, str] = {
 
 
 @dataclass(frozen=True)
+class PaletteBalanceControlSummary:
+    key: str
+    label: str
+    value: float
+    helper_text: str
+
+
+@dataclass(frozen=True)
+class ExtraNumericControlSummary:
+    key: str
+    label: str
+    value: float
+    helper_text: str
+
+
+@dataclass(frozen=True)
 class AdjustmentSummary:
     rule_id: str
     name: str
@@ -148,6 +187,8 @@ class AdjustmentSummary:
     level_values: tuple[float, ...]
     helper_text: str
     region_ids: list[str]
+    palette_balance_controls: tuple[PaletteBalanceControlSummary, ...]
+    extra_numeric_controls: tuple[ExtraNumericControlSummary, ...]
 
     @property
     def amount(self) -> float:
@@ -217,7 +258,7 @@ def _type_label(rule: DeclarativeRule) -> str:
     if _is_shadows_rule(rule):
         return "Shadows"
     if isinstance(transform, ColourAmountTransform):
-        return transform.channel.capitalize()
+        return str(transform.channel).capitalize()
     if isinstance(transform, ShiftColourPointTransform):
         return _label_from_colour_point_id(transform.target_colour_point)
     if isinstance(transform, BrightnessTransform):
@@ -229,10 +270,14 @@ def _type_label(rule: DeclarativeRule) -> str:
     if isinstance(transform, ColourSmoothingTransform):
         return "Smoothing"
     if isinstance(transform, FauxPaletteTransform):
-        return FAUX_PALETTE_DISPLAY_NAMES.get(
+        return str(
+            FAUX_PALETTE_DISPLAY_NAMES.get(
             transform.palette,
             transform.palette.replace("_", " ").title(),
         )
+        )
+    if isinstance(transform, DarkNebulaProcessingTransform):
+        return "Dark Nebula Processing"
     return "Saved adjustment"
 
 
@@ -263,7 +308,18 @@ def _helper_text(rule: DeclarativeRule) -> str:
         return "Softens colour variations so the glow blends more naturally."
     if isinstance(transform, FauxPaletteTransform):
         return FAUX_PALETTE_HELPER_TEXT.get(transform.palette, FAUX_PALETTE_HELPER_TEXT["hubble"])
+    if isinstance(transform, DarkNebulaProcessingTransform):
+        return (
+            "Reveals faint dark-nebula structure by lifting the translucent dust veil "
+            "while preserving the depth of denser obscuring regions. It uses only detail "
+            "already present in the source image."
+        )
     return "This saved adjustment is preserved and continues to render."
+
+
+def _palette_balance_helper_text(palette: str, label: str) -> str:
+    palette_name = FAUX_PALETTE_DISPLAY_NAMES.get(palette, palette.replace("_", " ").title())
+    return f"Controls the {label.lower()} contribution inside the {palette_name} palette."
 
 
 def _point_label(rule: DeclarativeRule) -> str:
@@ -357,6 +413,7 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "foraxx": (),
         "gold_cyan": (),
         "natural_bicolour": (),
+        "dark_nebula_processing": (),
     }[kind]
 
 
@@ -370,9 +427,9 @@ def _shift_target_colour_point_id(kind: AdjustmentKind) -> str | None:
 def _selection_family_for_rule(rule: DeclarativeRule) -> str | None:
     transform = rule.transform
     if isinstance(transform, ColourAmountTransform):
-        return transform.channel
+        return str(transform.channel)
     if isinstance(transform, ShiftColourPointTransform):
-        return transform.target_colour_point.replace("_", "-").split("-")[-1]
+        return str(transform.target_colour_point).replace("_", "-").split("-")[-1]
     return None
 
 
@@ -383,6 +440,16 @@ def _target_options() -> tuple[tuple[str, str], ...]:
         ("stars", "Stars"),
         ("dark_dust", "Dark Dust"),
     )
+
+
+def _dark_nebula_control_helper_text(key: str) -> str:
+    return {
+        "reveal_dust": "Makes faint translucent dust easier to see.",
+        "dust_contrast": "Separates subtle shapes inside the dust veil.",
+        "core_depth": "Keeps the densest dark lanes darker and more defined.",
+        "dust_colour": "Strengthens colour already present in the dust.",
+        "softness": "Softens the transition of the dark-nebula treatment.",
+    }[key]
 
 
 def _target_label(target_id: str) -> str:
@@ -427,8 +494,11 @@ class ProjectEditorViewModel(QObject):
         self._drawing_region_points: list[tuple[float, float]] = []
         self._show_regions = True
         self._semantic_overlay_mode: SemanticOverlaySelection = "off"
+        self._dark_dust_overlay_view: DarkDustOverlayView = "final_mask"
+        self._dark_dust_overlay_display: DarkDustOverlayDisplay = "overlay"
         self._dirty = False
         self._is_adjustment_interacting = False
+        self._pending_interaction_refresh = False
         self._active_job_id = 0
         self._thread_pool = QThreadPool(self)
         self._thread_pool.setMaxThreadCount(1)
@@ -649,6 +719,31 @@ class ProjectEditorViewModel(QObject):
             if self._working_documents
             else None
         )
+        if self._semantic_overlay_mode == "dark_dust":
+            analysis = analyze_dark_dust(overlay_image.data, settings)
+            mask = {
+                "final_mask": analysis.final_mask,
+                "veil_mask": analysis.veil_mask,
+                "core_mask": analysis.core_mask,
+                "relative_darkness": analysis.relative_darkness,
+                "local_illumination": analysis.local_illumination,
+                "background_support": analysis.background_support,
+            }[self._dark_dust_overlay_view]
+            label = {
+                "final_mask": "Dark Dust Final Mask",
+                "veil_mask": "Dark Dust Veil Mask",
+                "core_mask": "Dark Dust Core Mask",
+                "relative_darkness": "Dark Dust Relative Darkness",
+                "local_illumination": "Dark Dust Local Illumination",
+                "background_support": "Dark Dust Background Support",
+            }[self._dark_dust_overlay_view]
+            return SemanticOverlay(
+                mode="dark_dust",
+                label=label,
+                mask=mask,
+                display_mode=self._dark_dust_overlay_display,
+                coverage_percent=analysis.coverage_percent,
+            )
         mask = semantic_target_influence(
             overlay_image.data,
             self._semantic_overlay_mode,
@@ -657,7 +752,6 @@ class ProjectEditorViewModel(QObject):
         label = {
             "stars": "Star Split Overlay",
             "nebula": "Nebula Split Overlay",
-            "dark_dust": "Dark Dust Overlay",
         }[self._semantic_overlay_mode]
         return SemanticOverlay(mode=self._semantic_overlay_mode, label=label, mask=mask)
 
@@ -685,6 +779,8 @@ class ProjectEditorViewModel(QObject):
             secondary_value: float | None = None
             option_label: str | None = None
             option_enabled: bool | None = None
+            palette_balance_controls: tuple[PaletteBalanceControlSummary, ...] = ()
+            extra_numeric_controls: tuple[ExtraNumericControlSummary, ...] = ()
             editable = False
             transform = rule.transform
             supports_colour_point = _supports_colour_point(transform)
@@ -723,6 +819,47 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.amount
                 option_label = "Preserve Brightness"
                 option_enabled = transform.preserve_brightness
+                balance_labels: dict[str, str] = {
+                    balance_key: balance_label
+                    for balance_key, balance_label in FAUX_PALETTE_COLOUR_BALANCE_LABELS.items()
+                }
+                supported_balance: dict[str, float] = {
+                    balance_key: balance_value
+                    for balance_key, balance_value in transform.supported_colour_balance().items()
+                }
+                palette_balance_controls = tuple(
+                    PaletteBalanceControlSummary(
+                        key=key,
+                        label=balance_labels[key],
+                        value=supported_balance[key],
+                        helper_text=_palette_balance_helper_text(
+                            transform.palette,
+                            balance_labels[key],
+                        ),
+                    )
+                    for key in FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[transform.palette]
+                )
+            elif isinstance(transform, DarkNebulaProcessingTransform):
+                editable = True
+                primary_label = "Amount"
+                primary_value = transform.amount
+                option_label = "Preserve Bright Areas"
+                option_enabled = transform.preserve_bright_areas
+                extra_numeric_controls = tuple(
+                    ExtraNumericControlSummary(
+                        key=key,
+                        label=label,
+                        value=value,
+                        helper_text=_dark_nebula_control_helper_text(key),
+                    )
+                    for key, label, value in (
+                        ("reveal_dust", "Reveal Dust", transform.reveal_dust),
+                        ("dust_contrast", "Dust Contrast", transform.dust_contrast),
+                        ("core_depth", "Core Depth", transform.core_depth),
+                        ("dust_colour", "Dust Colour", transform.dust_colour),
+                        ("softness", "Softness", transform.softness),
+                    )
+                )
 
             summaries.append(
                 AdjustmentSummary(
@@ -760,6 +897,8 @@ class ProjectEditorViewModel(QObject):
                     else (),
                     helper_text=_helper_text(rule),
                     region_ids=list(rule.regions),
+                    palette_balance_controls=palette_balance_controls,
+                    extra_numeric_controls=extra_numeric_controls,
                 )
             )
         return summaries
@@ -1056,7 +1195,7 @@ class ProjectEditorViewModel(QObject):
         self.selectionChanged.emit("adjustment")
         self._after_metadata_change(render=True)
         self.statusChanged.emit(f'{rule_name} was created from the selected image feature.')
-        return rule.id
+        return str(rule.id)
 
     def duplicate_selected_adjustment(self) -> None:
         if self._working_documents is None:
@@ -1116,6 +1255,12 @@ class ProjectEditorViewModel(QObject):
 
     def set_adjustment_interaction_active(self, active: bool) -> None:
         self._is_adjustment_interacting = active
+        if not active and self._pending_interaction_refresh:
+            self._pending_interaction_refresh = False
+            self.adjustmentsChanged.emit()
+            self.regionsChanged.emit()
+            self.changesChanged.emit()
+            self.previewChanged.emit()
 
     def set_selected_adjustment_primary_value(self, value: float, *, render: bool = True) -> None:
         rule = self._selected_rule_model()
@@ -1136,6 +1281,8 @@ class ProjectEditorViewModel(QObject):
             transform.strength = max(0.0, min(1.0, value))
         elif isinstance(transform, FauxPaletteTransform):
             transform.amount = max(0.0, min(1.0, value))
+        elif isinstance(transform, DarkNebulaProcessingTransform):
+            transform.amount = max(0.0, min(1.0, value))
         else:
             return
         self._after_metadata_change(render=render)
@@ -1150,10 +1297,39 @@ class ProjectEditorViewModel(QObject):
 
     def set_selected_adjustment_option_enabled(self, enabled: bool) -> None:
         rule = self._selected_rule_model()
+        if rule is None or not isinstance(
+            rule.transform,
+            (FauxPaletteTransform, DarkNebulaProcessingTransform),
+        ):
+            return
+        if isinstance(rule.transform, FauxPaletteTransform):
+            rule.transform.preserve_brightness = enabled
+        else:
+            rule.transform.preserve_bright_areas = enabled
+        self._after_metadata_change(render=True)
+
+    def set_selected_adjustment_palette_balance(
+        self,
+        key: str,
+        value: float,
+        *,
+        render: bool = True,
+    ) -> None:
+        rule = self._selected_rule_model()
         if rule is None or not isinstance(rule.transform, FauxPaletteTransform):
             return
-        rule.transform.preserve_brightness = enabled
-        self._after_metadata_change(render=True)
+        if key not in FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[rule.transform.palette]:
+            return
+        setattr(rule.transform.colour_balance, key, max(0.0, min(200.0, value)))
+        self._after_metadata_change(render=render)
+
+    def reset_selected_adjustment_palette_balance(self, *, render: bool = True) -> None:
+        rule = self._selected_rule_model()
+        if rule is None or not isinstance(rule.transform, FauxPaletteTransform):
+            return
+        for key in FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[rule.transform.palette]:
+            setattr(rule.transform.colour_balance, key, 100.0)
+        self._after_metadata_change(render=render)
 
     def set_selected_adjustment_level_value(
         self,
@@ -1261,6 +1437,82 @@ class ProjectEditorViewModel(QObject):
             return
         self._working_documents.bundle.project.dark_dust = DarkDustSettings()
         self._after_metadata_change(render=True)
+
+    def dark_dust_overlay_view(self) -> DarkDustOverlayView:
+        return self._dark_dust_overlay_view
+
+    def set_dark_dust_overlay_view(self, view: DarkDustOverlayView) -> None:
+        self._dark_dust_overlay_view = view
+        self.previewChanged.emit()
+
+    def dark_dust_overlay_display(self) -> DarkDustOverlayDisplay:
+        return self._dark_dust_overlay_display
+
+    def set_dark_dust_overlay_display(self, display: DarkDustOverlayDisplay) -> None:
+        self._dark_dust_overlay_display = display
+        self.previewChanged.emit()
+
+    def set_solo_dark_dust_mask(self, enabled: bool) -> None:
+        self._dark_dust_overlay_display = "mask" if enabled else "overlay"
+        self.previewChanged.emit()
+
+    def dark_dust_coverage_percent(self) -> float:
+        if self._working_documents is None or self._source_image is None:
+            return 0.0
+        overlay_image = self._semantic_overlay_source_image()
+        if overlay_image is None:
+            return 0.0
+        analysis = analyze_dark_dust(
+            overlay_image.data,
+            self._working_documents.bundle.project.dark_dust,
+        )
+        return analysis.coverage_percent
+
+    def set_dark_dust_veil_strength(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.veil_strength = max(0.0, min(1.0, value))
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_core_strength(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.core_strength = max(0.0, min(1.0, value))
+        self._after_metadata_change(render=True)
+
+    def set_dark_dust_veil_core_balance(self, value: float) -> None:
+        if self._working_documents is None:
+            return
+        self._working_documents.bundle.project.dark_dust.veil_core_balance = max(
+            0.0,
+            min(1.0, value),
+        )
+        self._after_metadata_change(render=True)
+
+    def set_selected_adjustment_extra_numeric_control(
+        self,
+        key: str,
+        value: float,
+        *,
+        render: bool = True,
+    ) -> None:
+        rule = self._selected_rule_model()
+        if rule is None or not isinstance(rule.transform, DarkNebulaProcessingTransform):
+            return
+        clamped = max(0.0, min(1.0, value))
+        if key == "reveal_dust":
+            rule.transform.reveal_dust = clamped
+        elif key == "dust_contrast":
+            rule.transform.dust_contrast = clamped
+        elif key == "core_depth":
+            rule.transform.core_depth = clamped
+        elif key == "dust_colour":
+            rule.transform.dust_colour = clamped
+        elif key == "softness":
+            rule.transform.softness = clamped
+        else:
+            return
+        self._after_metadata_change(render=render)
 
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:
         rule = self._selected_rule_model()
@@ -1537,9 +1789,12 @@ class ProjectEditorViewModel(QObject):
             self._fingerprint(self._working_documents)
             != self._fingerprint(self._saved_documents)
         )
-        self.adjustmentsChanged.emit()
-        self.regionsChanged.emit()
-        self.changesChanged.emit()
+        if self._is_adjustment_interacting:
+            self._pending_interaction_refresh = True
+        else:
+            self.adjustmentsChanged.emit()
+            self.regionsChanged.emit()
+            self.changesChanged.emit()
         self.previewChanged.emit()
         if render and not self._is_adjustment_interacting:
             self.statusChanged.emit("Rendering preview...")
@@ -1628,7 +1883,7 @@ class ProjectEditorViewModel(QObject):
             return None
         for rule in self._working_documents.bundle.project.rules:
             if rule.match.colour_point == colour_point_id:
-                return rule.id
+                return str(rule.id)
         return None
 
     def _selected_rule_model(self) -> DeclarativeRule | None:
@@ -1650,12 +1905,12 @@ class ProjectEditorViewModel(QObject):
     def _first_adjustment_id(self) -> str | None:
         if self._working_documents is None or not self._working_documents.bundle.project.rules:
             return None
-        return self._working_documents.bundle.project.rules[0].id
+        return str(self._working_documents.bundle.project.rules[0].id)
 
     def _first_region_id(self) -> str | None:
         if self._working_documents is None or not self._working_documents.bundle.regions:
             return None
-        return next(iter(self._working_documents.bundle.regions))
+        return cast(str | None, next(iter(self._working_documents.bundle.regions)))
 
     def _scope_label(self, region_ids: list[str]) -> str:
         if not region_ids:
@@ -1663,7 +1918,7 @@ class ProjectEditorViewModel(QObject):
         if len(region_ids) == 1 and self._working_documents is not None:
             region = self._working_documents.bundle.regions.get(region_ids[0])
             if region is not None:
-                return region.name
+                return str(region.name)
         return "Multiple regions"
 
     def _default_target(self) -> SemanticTarget:
@@ -1672,6 +1927,8 @@ class ProjectEditorViewModel(QObject):
     def _default_target_for_kind(self, kind: AdjustmentKind) -> SemanticTarget:
         if kind in FAUX_PALETTE_KIND_TO_ID:
             return "nebula"
+        if kind == "dark_nebula_processing":
+            return "dark_dust"
         return self._default_target()
 
     def _normalized_colour_sample(
@@ -1718,7 +1975,7 @@ class ProjectEditorViewModel(QObject):
             for colour_point in palette.colour_points:
                 haystack = f"{colour_point.id} {colour_point.name}".lower()
                 if any(token in haystack for token in tokens):
-                    return colour_point.id
+                    return str(colour_point.id)
         return None
 
     def _default_adjustment_name(self, kind: AdjustmentKind) -> str:
@@ -1739,6 +1996,7 @@ class ProjectEditorViewModel(QObject):
             "foraxx": "Foraxx-Inspired",
             "gold_cyan": "Gold & Cyan",
             "natural_bicolour": "Natural Bi-colour",
+            "dark_nebula_processing": "Dark Nebula Processing",
         }[kind]
 
     def _selected_adjustment_name(self, kind: AdjustmentKind) -> str:
@@ -1759,6 +2017,7 @@ class ProjectEditorViewModel(QObject):
             "foraxx": "Selected Foraxx-Inspired",
             "gold_cyan": "Selected Gold & Cyan",
             "natural_bicolour": "Selected Natural Bi-colour",
+            "dark_nebula_processing": "Selected Dark Nebula Processing",
         }[kind]
 
     def _unique_rule_id(self, base: str) -> str:
@@ -1801,6 +2060,7 @@ class ProjectEditorViewModel(QObject):
             | SaturationTransform
             | ColourSmoothingTransform
             | FauxPaletteTransform
+            | DarkNebulaProcessingTransform
         )
         if kind == "blue":
             transform = ColourAmountTransform(type="colour_amount", channel="blue", amount=1.0)
@@ -1900,6 +2160,21 @@ class ProjectEditorViewModel(QObject):
                 ),
                 amount=0.0,
                 preserve_brightness=True,
+            )
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "dark_nebula_processing":
+            transform = DarkNebulaProcessingTransform(
+                type="dark_nebula_processing",
+                amount=0.0,
+                reveal_dust=0.40,
+                dust_contrast=0.30,
+                core_depth=0.55,
+                dust_colour=0.15,
+                softness=0.20,
+                preserve_bright_areas=True,
             )
             match = RuleMatch(
                 colour_point=None,

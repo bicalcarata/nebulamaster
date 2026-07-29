@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from engine import validate_project
 from project_io import load_project_file, locate_project_file
 from project_model import ProjectFile
@@ -80,6 +81,9 @@ def test_project_model_accepts_dark_dust_target_and_settings() -> None:
                 "structure_size": 0.14,
                 "background_protection": 0.21,
                 "softness": 0.33,
+                "veil_strength": 0.61,
+                "core_strength": 0.73,
+                "veil_core_balance": 0.49,
             },
             "rules": [
                 {
@@ -97,6 +101,55 @@ def test_project_model_accepts_dark_dust_target_and_settings() -> None:
 
     assert project.rules[0].target == "dark_dust"
     assert project.dark_dust.sensitivity == 0.66
+    assert project.dark_dust.veil_strength == 0.61
+    assert project.dark_dust.core_strength == 0.73
+    assert project.dark_dust.veil_core_balance == 0.49
+
+
+def test_project_model_accepts_dark_nebula_processing_transform() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "dark-nebula-demo", "name": "Dark Nebula Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [
+                {"id": "combined", "name": "Combined Image"},
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "stars", "name": "Stars"},
+                {"id": "dark_dust", "name": "Dark Dust"},
+                {"id": "background", "name": "Background"},
+            ],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "dark-nebula",
+                    "name": "Dark Nebula Processing",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "dark_dust",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "dark_nebula_processing",
+                        "amount": 0.5,
+                        "reveal_dust": 0.4,
+                        "dust_contrast": 0.3,
+                        "core_depth": 0.55,
+                        "dust_colour": 0.15,
+                        "softness": 0.2,
+                        "preserve_bright_areas": True,
+                    },
+                }
+            ],
+        }
+    )
+
+    transform = project.rules[0].transform
+    assert transform.type == "dark_nebula_processing"
+    assert transform.amount == 0.5
+    assert transform.core_depth == 0.55
 
 
 def test_project_model_accepts_faux_palette_transform() -> None:
@@ -138,6 +191,95 @@ def test_project_model_accepts_faux_palette_transform() -> None:
 
         transform = project.rules[0].transform
         assert transform.type == "faux_palette"
+        assert transform.supported_colour_balance()
+        assert all(value == 100.0 for value in transform.supported_colour_balance().values())
+
+
+def test_faux_palette_transform_accepts_supported_colour_balance_controls() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "faux-demo", "name": "Faux Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [
+                {"id": "combined", "name": "Combined Image"},
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "stars", "name": "Stars"},
+                {"id": "dark_dust", "name": "Dark Dust"},
+                {"id": "background", "name": "Background"},
+            ],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "faux-hubble",
+                    "name": "Faux Hubble",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "faux_palette",
+                        "palette": "hubble",
+                        "amount": 0.6,
+                        "preserve_brightness": True,
+                        "colour_balance": {"gold": 80.0, "green": 120.0, "cyan": 140.0},
+                    },
+                }
+            ],
+        }
+    )
+
+    transform = project.rules[0].transform
+    assert transform.type == "faux_palette"
+    assert transform.supported_colour_balance() == {
+        "gold": 80.0,
+        "green": 120.0,
+        "cyan": 140.0,
+    }
+
+
+def test_faux_palette_transform_rejects_unsupported_colour_balance_keys() -> None:
+    with pytest.raises(Exception) as error_info:  # noqa: BLE001
+        ProjectFile.model_validate(
+            {
+                "schema_version": 1,
+                "project": {"id": "faux-demo", "name": "Faux Demo"},
+                "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+                "semantic_channels": [
+                    {"id": "combined", "name": "Combined Image"},
+                    {"id": "nebula", "name": "Nebula"},
+                    {"id": "stars", "name": "Stars"},
+                    {"id": "dark_dust", "name": "Dark Dust"},
+                    {"id": "background", "name": "Background"},
+                ],
+                "palettes": [],
+                "regions": [],
+                "render_profiles": [],
+                "plugins": {"path": "plugins/lock.yaml"},
+                "rules": [
+                    {
+                        "id": "faux-foo",
+                        "name": "Faux HOO",
+                        "enabled": True,
+                        "selection_source": "current",
+                        "target": "nebula",
+                        "match": {"softness": 0.5},
+                        "transform": {
+                            "type": "faux_palette",
+                            "palette": "hoo",
+                            "amount": 0.6,
+                            "preserve_brightness": True,
+                            "colour_balance": {"green": 120.0},
+                        },
+                    }
+                ],
+            }
+        )
+
+    assert "unsupported keys for palette 'hoo': green" in str(error_info.value)
 
 
 def test_validate_valid_example_project() -> None:

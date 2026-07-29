@@ -9,10 +9,11 @@ import yaml
 from engine import EXIT_VALIDATION_SUCCESS
 from engine.preview import render_preview, render_preview_image
 from engine.selection import apply_faux_palette, compute_luminance
-from engine.semantic import dark_dust_influence, star_influence
+from engine.semantic import analyze_dark_dust, dark_dust_influence, star_influence
 from engine.validation import load_valid_project_bundle
 from image_io import load_canonical_image, resize_to_max_edge
 from PIL import Image
+from project_model import DarkDustSettings
 from renderer_cli.main import app
 from typer.testing import CliRunner
 
@@ -120,6 +121,45 @@ def _write_star_nebula_source_image(path: Path, size: tuple[int, int] = (64, 48)
     for x, y in stars:
         data[max(0, y - 1) : y + 2, max(0, x - 1) : x + 2, :] = [255, 255, 255]
     Image.fromarray(data, mode="RGB").save(path, format="PNG")
+
+
+def _dark_nebula_fixture_float_image(size: tuple[int, int] = (96, 64)) -> np.ndarray:
+    width, height = size
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    x = xx / max(width - 1, 1)
+    y = yy / max(height - 1, 1)
+
+    image = np.full((height, width, 3), [0.045, 0.045, 0.055], dtype=np.float32)
+
+    illuminated_field = np.exp(-(((x - 0.52) ** 2) / 0.16 + ((y - 0.58) ** 2) / 0.11)).astype(
+        np.float32
+    )
+    image += illuminated_field[..., None] * np.asarray([0.44, 0.40, 0.34], dtype=np.float32)
+
+    veil = np.exp(-(((x - 0.50) ** 2) / 0.10 + ((y - 0.60) ** 2) / 0.08)).astype(np.float32)
+    veil_detail = (
+        0.65 + 0.18 * np.sin((x * 9.0) + (y * 5.0)) + 0.12 * np.cos((x * 6.0) - (y * 7.0))
+    ).astype(np.float32)
+    veil_detail = np.clip(veil_detail, 0.35, 1.0).astype(np.float32, copy=False)
+    image -= (
+        veil[..., None] * veil_detail[..., None] * np.asarray([0.13, 0.12, 0.11], dtype=np.float32)
+    )
+
+    core = np.exp(-(((x - 0.52) ** 2) / 0.018 + ((y - 0.60) ** 2) / 0.025)).astype(np.float32)
+    image -= core[..., None] * np.asarray([0.19, 0.18, 0.17], dtype=np.float32)
+
+    bright_patch = np.exp(-(((x - 0.66) ** 2) / 0.012 + ((y - 0.43) ** 2) / 0.010)).astype(
+        np.float32
+    )
+    image += bright_patch[..., None] * np.asarray([0.28, 0.33, 0.40], dtype=np.float32)
+
+    return np.clip(image, 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def _write_dark_nebula_source_image(path: Path, size: tuple[int, int] = (96, 64)) -> None:
+    image = _dark_nebula_fixture_float_image(size)
+    encoded = np.clip(image * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8, copy=False)
+    Image.fromarray(encoded, mode="RGB").save(path, format="PNG")
 
 
 def test_render_preview_image_can_skip_provenance_hashing(
@@ -274,6 +314,7 @@ def _rule_faux_palette(
     palette: str = "hubble",
     amount: float = 0.0,
     preserve_brightness: bool = True,
+    colour_balance: dict[str, float] | None = None,
     regions: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -289,19 +330,57 @@ def _rule_faux_palette(
             "palette": palette,
             "amount": amount,
             "preserve_brightness": preserve_brightness,
+            "colour_balance": colour_balance or {},
+        },
+    }
+
+
+def _rule_dark_nebula_processing(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "dark_dust",
+    amount: float = 1.0,
+    reveal_dust: float = 0.40,
+    dust_contrast: float = 0.30,
+    core_depth: float = 0.55,
+    dust_colour: float = 0.15,
+    softness: float = 0.20,
+    preserve_bright_areas: bool = True,
+    regions: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "dark_nebula_processing",
+            "amount": amount,
+            "reveal_dust": reveal_dust,
+            "dust_contrast": dust_contrast,
+            "core_depth": core_depth,
+            "dust_colour": dust_colour,
+            "softness": softness,
+            "preserve_bright_areas": preserve_bright_areas,
         },
     }
 
 
 def _faux_palette_swatch_image() -> np.ndarray:
     return np.asarray(
-        [[
-            [0.82, 0.22, 0.12],
-            [0.74, 0.16, 0.48],
-            [0.08, 0.72, 0.88],
-            [0.12, 0.28, 0.84],
-            [0.45, 0.45, 0.45],
-        ]],
+        [
+            [
+                [0.82, 0.22, 0.12],
+                [0.74, 0.16, 0.48],
+                [0.08, 0.72, 0.88],
+                [0.12, 0.28, 0.84],
+                [0.45, 0.45, 0.45],
+            ]
+        ],
         dtype=np.float32,
     )
 
@@ -311,6 +390,7 @@ def _palette_output(
     *,
     amount: float = 1.0,
     preserve_brightness: bool = True,
+    colour_balance: dict[str, float] | None = None,
 ) -> np.ndarray:
     image = _faux_palette_swatch_image()
     weights = np.ones(image.shape[:2], dtype=np.float32)
@@ -320,6 +400,7 @@ def _palette_output(
         palette=palette,
         amount=amount,
         preserve_brightness=preserve_brightness,
+        colour_balance=colour_balance,
     )
 
 
@@ -499,6 +580,39 @@ def test_zero_rule_project_produces_resized_source_preview(tmp_path: Path) -> No
 
     assert result.applied_rule_ids == []
     np.testing.assert_allclose(preview.data, resized.data, atol=1e-6)
+
+
+def test_preview_rule_execution_uses_preview_sized_working_image_for_large_sources(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "preview-large"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_source_image(project_dir / "sources/source.png", size=(2048, 1024))
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(
+            _base_project_payload(
+                [
+                    _rule_brightness(
+                        rule_id="increase-blue",
+                        name="Lift",
+                        target="combined",
+                    )
+                ]
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert bundle is not None
+    assert report.valid is True
+
+    result = render_preview_image(bundle, include_provenance=False, use_cached_sources=True)
+
+    assert result.width == 1024
+    assert result.height == 512
+    assert result.execution_trace[0].affected_pixel_count == 1024 * 512
 
 
 def test_existing_single_rule_projects_remain_compatible(tmp_path: Path) -> None:
@@ -755,6 +869,98 @@ def test_broad_dark_shape_within_brighter_field_produces_dark_dust_mask() -> Non
     assert float(mask[6, 6]) < 0.05
 
 
+def test_dark_dust_analysis_distinguishes_veil_and_core_masks() -> None:
+    image = _dark_nebula_fixture_float_image()
+    analysis = analyze_dark_dust(image)
+
+    veil_value = float(analysis.veil_mask.max())
+    core_value = float(analysis.core_mask.max())
+    background_value = float(analysis.final_mask[6, 6])
+
+    assert veil_value > 0.50
+    assert core_value > 0.70
+    assert core_value > float(analysis.core_mask[40, 40])
+    assert background_value < 0.20
+
+
+def test_dark_dust_analysis_masks_are_clamped_and_match_image_dimensions() -> None:
+    image = _dark_nebula_fixture_float_image()
+    analysis = analyze_dark_dust(image)
+
+    for plane in (
+        analysis.final_mask,
+        analysis.veil_mask,
+        analysis.core_mask,
+        analysis.relative_darkness,
+        analysis.local_illumination,
+        analysis.background_support,
+    ):
+        assert plane.shape == image.shape[:2]
+        assert float(plane.min()) >= 0.0
+        assert float(plane.max()) <= 1.0
+
+
+def test_dark_dust_background_protection_reduces_low_support_selection() -> None:
+    image = _dark_nebula_fixture_float_image()
+
+    low_protection = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(background_protection=0.0),
+    )
+    high_protection = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(background_protection=1.0),
+    )
+
+    assert float(high_protection.final_mask.mean()) < float(low_protection.final_mask.mean())
+    assert float(high_protection.final_mask[6, 6]) <= float(low_protection.final_mask[6, 6])
+    assert float(high_protection.final_mask[40, 40]) < float(low_protection.final_mask[40, 40])
+
+
+def test_dark_dust_structure_size_changes_detected_structure_scale() -> None:
+    image = _dark_nebula_fixture_float_image()
+    compact = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(structure_size=0.04),
+    )
+    broad = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(structure_size=0.25),
+    )
+
+    assert float(compact.final_mask[18, 60]) > float(broad.final_mask[18, 60])
+    assert np.allclose(compact.final_mask, broad.final_mask) is False
+
+
+def test_dark_dust_softness_changes_edge_transition_more_than_detection_extent() -> None:
+    image = _dark_nebula_fixture_float_image()
+    crisp = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(softness=0.05),
+    )
+    soft = analyze_dark_dust(
+        image,
+        settings=DarkDustSettings(softness=0.75),
+    )
+
+    crisp_extent = int(np.count_nonzero(crisp.final_mask > 0.50))
+    soft_extent = int(np.count_nonzero(soft.final_mask > 0.50))
+    crisp_partial = int(np.count_nonzero((crisp.final_mask > 0.05) & (crisp.final_mask < 0.95)))
+    soft_partial = int(np.count_nonzero((soft.final_mask > 0.05) & (soft.final_mask < 0.95)))
+
+    assert soft_extent != crisp_extent
+    assert soft_partial > crisp_partial
+
+
+def test_dark_dust_coverage_is_deterministic() -> None:
+    image = _dark_nebula_fixture_float_image()
+    first = analyze_dark_dust(image)
+    second = analyze_dark_dust(image)
+
+    assert first.coverage_percent == second.coverage_percent
+    assert np.array_equal(first.final_mask, second.final_mask)
+
+
 def test_isolated_black_pixels_are_suppressed_from_dark_dust_mask() -> None:
     image = np.full((64, 64, 3), 0.55, dtype=np.float32)
     image[32, 32, :] = 0.0
@@ -840,6 +1046,40 @@ def test_faux_palettes_amount_fifty_is_midpoint_between_incoming_and_full_mappin
         midpoint = _palette_output(palette, amount=0.5)
         full = _palette_output(palette, amount=1.0)
         assert np.allclose(midpoint, (unchanged + full) / 2.0, atol=1e-5)
+
+
+def test_faux_palette_all_colour_balances_zero_resolves_to_incoming_image() -> None:
+    image = _faux_palette_swatch_image()
+    for palette in FAUX_PALETTE_IDS:
+        if palette == "hubble":
+            colour_balance = {"gold": 0.0, "green": 0.0, "cyan": 0.0}
+        elif palette == "hoo":
+            colour_balance = {"red": 0.0, "cyan": 0.0}
+        elif palette == "foraxx":
+            colour_balance = {"amber": 0.0, "cyan": 0.0}
+        elif palette == "gold_cyan":
+            colour_balance = {"gold": 0.0, "cyan": 0.0}
+        else:
+            colour_balance = {"warm": 0.0, "cool": 0.0}
+        transformed = _palette_output(palette, amount=1.0, colour_balance=colour_balance)
+        assert np.allclose(transformed, image, atol=1e-6)
+
+
+def test_hubble_colour_balance_controls_shift_expected_destination_families() -> None:
+    default = _palette_output("hubble", amount=1.0)
+    boosted_cyan = _palette_output(
+        "hubble",
+        amount=1.0,
+        colour_balance={"gold": 100.0, "green": 100.0, "cyan": 200.0},
+    )
+    reduced_gold = _palette_output(
+        "hubble",
+        amount=1.0,
+        colour_balance={"gold": 0.0, "green": 100.0, "cyan": 100.0},
+    )
+
+    assert boosted_cyan[0, 1, 2] > default[0, 1, 2]
+    assert reduced_gold[0, 0, 0] < default[0, 0, 0]
 
 
 def test_faux_palettes_preserve_brightness_keeps_luminance_within_tolerance() -> None:
@@ -928,6 +1168,422 @@ def test_faux_hubble_targeting_dark_dust_uses_dark_dust_mask(tmp_path: Path) -> 
     assert background_delta < 0.02
 
 
+def test_dark_nebula_processing_amount_zero_is_unchanged(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-zero"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula", name="Dark Nebula Processing", amount=0.0
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    preview_path = tmp_path / "dark-nebula-zero.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+    assert np.allclose(preview, source, atol=1e-6)
+
+
+def test_dark_nebula_processing_reveal_dust_raises_veil_luminance(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-reveal"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.80,
+                dust_contrast=0.0,
+                core_depth=0.0,
+                dust_colour=0.0,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert bundle is not None
+    assert report.valid is True
+    source_luma = compute_luminance(load_canonical_image(project_dir / "sources/source.png").data)
+    preview_luma = compute_luminance(render_preview_image(bundle).image.data)
+
+    assert float(preview_luma[40, 58]) > float(source_luma[40, 58]) + 0.02
+
+
+def test_dark_nebula_processing_core_depth_keeps_core_darker_than_lifted_veil(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "dark-nebula-core"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.75,
+                dust_contrast=0.35,
+                core_depth=0.85,
+                dust_colour=0.0,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert bundle is not None
+    assert report.valid is True
+    preview_luma = compute_luminance(render_preview_image(bundle).image.data)
+    assert float(preview_luma[40, 58]) > float(preview_luma[40, 40]) + 0.005
+
+
+def test_dark_nebula_processing_dust_contrast_increases_low_frequency_veil_contrast(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "dark-nebula-contrast"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+
+    low_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.75,
+                dust_contrast=0.0,
+                core_depth=0.35,
+                dust_colour=0.0,
+            )
+        ]
+    )
+    high_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.75,
+                dust_contrast=0.85,
+                core_depth=0.35,
+                dust_colour=0.0,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(low_payload, sort_keys=False), encoding="utf-8"
+    )
+    low_bundle, low_report = load_valid_project_bundle(project_dir)
+    assert low_bundle is not None
+    assert low_report.valid is True
+    low_luma = compute_luminance(render_preview_image(low_bundle).image.data)
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(high_payload, sort_keys=False), encoding="utf-8"
+    )
+    high_bundle, high_report = load_valid_project_bundle(project_dir)
+    assert high_bundle is not None
+    assert high_report.valid is True
+    high_luma = compute_luminance(render_preview_image(high_bundle).image.data)
+    low_delta = abs(float(low_luma[37, 54] - low_luma[44, 58]))
+    high_delta = abs(float(high_luma[37, 54] - high_luma[44, 58]))
+
+    assert high_delta > low_delta
+
+
+def test_dark_nebula_processing_dust_colour_increases_existing_chroma_without_new_hue_family(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "dark-nebula-colour"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+
+    neutral_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.70,
+                dust_contrast=0.20,
+                core_depth=0.35,
+                dust_colour=0.0,
+            )
+        ]
+    )
+    colour_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.70,
+                dust_contrast=0.20,
+                core_depth=0.35,
+                dust_colour=0.85,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(neutral_payload, sort_keys=False), encoding="utf-8"
+    )
+    neutral_bundle, neutral_report = load_valid_project_bundle(project_dir)
+    assert neutral_bundle is not None
+    assert neutral_report.valid is True
+    neutral = render_preview_image(neutral_bundle).image.data[37, 54]
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(colour_payload, sort_keys=False), encoding="utf-8"
+    )
+    colour_bundle, colour_report = load_valid_project_bundle(project_dir)
+    assert colour_bundle is not None
+    assert colour_report.valid is True
+    coloured = render_preview_image(colour_bundle).image.data[37, 54]
+    neutral_chroma = float(np.max(neutral) - np.min(neutral))
+    colour_chroma = float(np.max(coloured) - np.min(coloured))
+
+    assert colour_chroma > neutral_chroma + 0.02
+    assert int(np.argmax(neutral)) == int(np.argmax(coloured))
+
+
+def test_dark_nebula_processing_preserve_bright_areas_limits_highlight_changes(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "dark-nebula-bright"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+
+    protected_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.80,
+                dust_contrast=0.50,
+                core_depth=0.45,
+                dust_colour=0.20,
+                preserve_bright_areas=True,
+            )
+        ]
+    )
+    unprotected_payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.80,
+                dust_contrast=0.50,
+                core_depth=0.45,
+                dust_colour=0.20,
+                preserve_bright_areas=False,
+            )
+        ]
+    )
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    bright_source = np.clip((source * 255.0) + 70.0, 0.0, 255.0).astype(np.uint8, copy=False)
+    Image.fromarray(bright_source, mode="RGB").save(
+        project_dir / "sources/source.png", format="PNG"
+    )
+
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(protected_payload, sort_keys=False), encoding="utf-8"
+    )
+    protected_bundle, protected_report = load_valid_project_bundle(project_dir)
+    assert protected_bundle is not None
+    assert protected_report.valid is True
+    protected = render_preview_image(protected_bundle).image.data
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(unprotected_payload, sort_keys=False), encoding="utf-8"
+    )
+    unprotected_bundle, unprotected_report = load_valid_project_bundle(project_dir)
+    assert unprotected_bundle is not None
+    assert unprotected_report.valid is True
+    unprotected = render_preview_image(unprotected_bundle).image.data
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    protected_delta = float(np.abs(protected[40, 58] - source[40, 58]).max())
+    unprotected_delta = float(np.abs(unprotected[40, 58] - source[40, 58]).max())
+
+    assert protected_delta <= unprotected_delta
+
+
+def test_dark_nebula_processing_does_not_globally_lift_empty_background(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-background"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.90,
+                dust_contrast=0.60,
+                core_depth=0.50,
+                dust_colour=0.20,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    preview_path = tmp_path / "dark-nebula-background.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = load_canonical_image(preview_path).data
+    background_delta = float(np.abs(preview[6, 6] - source[6, 6]).max())
+
+    assert background_delta < 0.02
+
+
+def test_dark_nebula_processing_keeps_core_gradients_and_avoids_flat_black(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-gradients"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.80,
+                dust_contrast=0.55,
+                core_depth=0.95,
+                dust_colour=0.10,
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    preview_path = tmp_path / "dark-nebula-gradients.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    preview_luma = compute_luminance(load_canonical_image(preview_path).data)
+    core_patch = preview_luma[34:44, 44:54]
+
+    assert float(core_patch.min()) > 0.0
+    assert float(core_patch.std()) > 0.002
+
+
+def test_dark_nebula_processing_regions_constrain_the_effect(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-region"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=1.0,
+                reveal_dust=0.75,
+                dust_contrast=0.40,
+                core_depth=0.50,
+                regions=["lower-right"],
+            )
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert bundle is not None
+    assert report.valid is True
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    preview = render_preview_image(bundle).image.data
+    inside_delta = float(np.abs(preview[40, 58] - source[40, 58]).max())
+    outside_delta = float(np.abs(preview[20, 22] - source[20, 22]).max())
+
+    assert inside_delta > 0.02
+    assert outside_delta < 0.01
+
+
+def test_dark_nebula_processing_ordering_remains_deterministic(tmp_path: Path) -> None:
+    project_dir = tmp_path / "dark-nebula-deterministic"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _write_dark_nebula_source_image(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [
+            _rule_dark_nebula_processing(
+                rule_id="dark-nebula",
+                name="Dark Nebula Processing",
+                amount=0.65,
+                reveal_dust=0.55,
+                dust_contrast=0.45,
+                core_depth=0.60,
+                dust_colour=0.30,
+            ),
+            _rule_faux_palette(
+                rule_id="faux",
+                name="Foraxx-Inspired",
+                target="dark_dust",
+                palette="foraxx",
+                amount=0.25,
+            ),
+        ]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    first_path = tmp_path / "dark-nebula-deterministic-first.png"
+    second_path = tmp_path / "dark-nebula-deterministic-second.png"
+    render_preview(project_dir, first_path, force=True)
+    render_preview(project_dir, second_path, force=True)
+
+    first = load_canonical_image(first_path).data
+    second = load_canonical_image(second_path).data
+    assert np.array_equal(first, second)
+
+
+def test_dark_nebula_processing_avoids_nan_and_infinity_for_extreme_inputs(tmp_path: Path) -> None:
+    for name, fill in (
+        ("black", 0),
+        ("very-dark", 8),
+        ("grey", 128),
+        ("white", 255),
+    ):
+        project_dir = tmp_path / name
+        project_dir.mkdir()
+        _write_common_files(project_dir)
+        image = np.full((48, 64, 3), fill, dtype=np.uint8)
+        Image.fromarray(image, mode="RGB").save(project_dir / "sources/source.png", format="PNG")
+        payload = _base_project_payload(
+            [_rule_dark_nebula_processing(rule_id="dark-nebula", name="Dark Nebula Processing")]
+        )
+        (project_dir / "project.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False),
+            encoding="utf-8",
+        )
+        preview_path = tmp_path / f"{name}.png"
+        render_preview(project_dir, preview_path, force=True)
+        preview = load_canonical_image(preview_path).data
+
+        assert np.isfinite(preview).all()
+
+
 def test_faux_hubble_regions_constrain_the_effect(tmp_path: Path) -> None:
     project_dir = _create_project(
         tmp_path,
@@ -1011,13 +1667,15 @@ def test_natural_bicolour_preserves_more_original_chroma_than_faux_hoo() -> None
 
 def test_faux_palettes_do_not_produce_nan_or_infinite_values() -> None:
     samples = np.asarray(
-        [[
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-            [0.5, 0.5, 0.5],
-            [0.8, 0.1, 0.1],
-            [0.02, 0.02, 0.03],
-        ]],
+        [
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [0.5, 0.5, 0.5],
+                [0.8, 0.1, 0.1],
+                [0.02, 0.02, 0.03],
+            ]
+        ],
         dtype=np.float32,
     )
     weights = np.ones(samples.shape[:2], dtype=np.float32)

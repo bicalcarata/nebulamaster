@@ -18,6 +18,7 @@ from project_model import (
     ChannelContributionSourceMix,
     ColourAmountTransform,
     ColourSmoothingTransform,
+    DarkNebulaProcessingTransform,
     FauxPaletteTransform,
     LevelsTransform,
     ManualAlignment,
@@ -218,6 +219,7 @@ def _validate_project_cross_references(bundle: ProjectBundle) -> list[Validation
                 LevelsTransform,
                 ColourSmoothingTransform,
                 FauxPaletteTransform,
+                DarkNebulaProcessingTransform,
             ),
         ):
             issues.append(
