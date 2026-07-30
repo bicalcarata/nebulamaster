@@ -14,9 +14,12 @@ from image_io import CanonicalImage, inspect_image, load_canonical_image
 from nebula_desktop import __version__ as desktop_version
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
+    _MAX_RECENT_PROJECTS,
     AboutDialog,
     MainWindow,
     _brightness_amount_to_ui,
+    _format_recent_project_label,
+    _normalize_project_root,
     _sorted_adjustment_menu_items,
 )
 from nebula_desktop.viewmodels.project_editor import AdjustmentKind, ProjectEditorViewModel
@@ -218,6 +221,77 @@ def test_open_project_dialog_accepts_project_yaml(
     qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
 
     assert window.project_name_label.text() == "Horsehead Demo"
+
+
+def test_file_menu_tracks_five_most_recent_projects_during_runtime(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source = Path("examples/valid/minimal-project")
+    MainWindow._recent_projects_this_session = []
+    project_paths: list[Path] = []
+    for index in range(6):
+        destination = tmp_path / f"project-{index}"
+        shutil.copytree(source, destination)
+        project_paths.append(destination)
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    for project_path in project_paths:
+        assert window._open_project_path(project_path, async_preview=False) is True
+
+    expected = [
+        _normalize_project_root(path) for path in reversed(project_paths)
+    ][:_MAX_RECENT_PROJECTS]
+    assert MainWindow._recent_projects_this_session == expected
+
+    recent_actions = [
+        action for action in window.file_menu.actions() if action.property("recentProject") is True
+    ]
+    assert len(recent_actions) == _MAX_RECENT_PROJECTS
+    assert [Path(cast(str, action.data())) for action in recent_actions] == expected
+    assert [action.text() for action in recent_actions] == [
+        _format_recent_project_label(path) for path in expected
+    ]
+
+    assert window._open_project_path(project_paths[2], async_preview=False) is True
+    selected_path = _normalize_project_root(project_paths[2])
+    reordered = [
+        selected_path,
+        *[path for path in expected if path != selected_path],
+    ]
+    assert MainWindow._recent_projects_this_session == reordered[:_MAX_RECENT_PROJECTS]
+
+
+def test_recent_project_menu_action_reopens_project(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source = Path("examples/valid/minimal-project")
+    MainWindow._recent_projects_this_session = []
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    shutil.copytree(source, project_a)
+    shutil.copytree(source, project_b)
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window._open_project_path(project_a, async_preview=False) is True
+    assert window._open_project_path(project_b, async_preview=False) is True
+
+    recent_actions = [
+        action for action in window.file_menu.actions() if action.property("recentProject") is True
+    ]
+    assert len(recent_actions) == 2
+
+    recent_actions[1].trigger()
+
+    assert window.view_model.project_path == _normalize_project_root(project_a)
+    assert MainWindow._recent_projects_this_session[0] == _normalize_project_root(project_a)
 
 
 def test_help_button_opens_help_dialog(

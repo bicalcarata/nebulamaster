@@ -105,6 +105,7 @@ _HELP_SHOW_ON_STARTUP_KEY = "ui/show_help_on_startup"
 _LEFT_PANEL_MIN_WIDTH = 220
 _CENTER_PANEL_MIN_WIDTH = 560
 _RIGHT_PANEL_MIN_WIDTH = 320
+_MAX_RECENT_PROJECTS = 5
 _ADJUSTMENT_MENU_ITEMS: tuple[tuple[str, AdjustmentKind], ...] = tuple(
     sorted(
         (
@@ -151,6 +152,17 @@ def _tinted_standard_icon(
 
 def _sorted_adjustment_menu_items() -> tuple[tuple[str, AdjustmentKind], ...]:
     return _ADJUSTMENT_MENU_ITEMS
+
+
+def _normalize_project_root(project_path: Path) -> Path:
+    normalized = Path(project_path).expanduser()
+    if normalized.name.lower() in {"project.yaml", "project.yml"}:
+        normalized = normalized.parent
+    return normalized.resolve()
+
+
+def _format_recent_project_label(project_path: Path) -> str:
+    return f"{project_path.name}  -  {project_path}"
 
 
 def _brightness_amount_to_ui(amount: float) -> float:
@@ -271,6 +283,7 @@ class AboutDialog(QDialog):
 
 class MainWindow(QMainWindow):
     _startup_help_shown_this_session = False
+    _recent_projects_this_session: list[Path] = []
 
     def __init__(self, project_path: Path | None = None) -> None:
         super().__init__()
@@ -284,11 +297,16 @@ class MainWindow(QMainWindow):
         self._adjustment_render_timer.setInterval(300)
         self._adjustment_render_timer.timeout.connect(self._request_deferred_adjustment_render)
         self._palette_balance_expanded_by_rule_id: dict[str, bool] = {}
+        self.file_menu: QMenu | None = None
+        self.new_project_action: QAction | None = None
+        self.open_project_action: QAction | None = None
+        self.export_screen_action: QAction | None = None
+        self.export_print_action: QAction | None = None
         self.view_model = ProjectEditorViewModel(self)
         self._build_ui()
         self._connect_signals()
         if project_path is not None:
-            self.view_model.open_project(project_path, async_preview=True)
+            self._open_project_path(project_path, async_preview=True)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -322,20 +340,17 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([left, center, right])
 
     def _build_ui(self) -> None:
-        new_project_action = QAction("New Project from Image...", self)
-        new_project_action.triggered.connect(self._new_project_from_image_dialog)
-        open_action = QAction("Open Project...", self)
-        open_action.triggered.connect(self._open_project_dialog)
-        export_screen_action = QAction("Export for Screen...", self)
-        export_screen_action.triggered.connect(self._export_for_screen)
-        export_print_action = QAction("Export for Print...", self)
-        export_print_action.triggered.connect(self._export_for_print)
-        file_menu = self.menuBar().addMenu("File")
-        file_menu.addAction(new_project_action)
-        file_menu.addAction(open_action)
-        file_menu.addSeparator()
-        file_menu.addAction(export_screen_action)
-        file_menu.addAction(export_print_action)
+        self.new_project_action = QAction("New Project from Image...", self)
+        self.new_project_action.triggered.connect(self._new_project_from_image_dialog)
+        self.open_project_action = QAction("Open Project...", self)
+        self.open_project_action.triggered.connect(self._open_project_dialog)
+        self.export_screen_action = QAction("Export for Screen...", self)
+        self.export_screen_action.triggered.connect(self._export_for_screen)
+        self.export_print_action = QAction("Export for Print...", self)
+        self.export_print_action.triggered.connect(self._export_for_print)
+        self.file_menu = self.menuBar().addMenu("File")
+        self.file_menu.aboutToShow.connect(self._rebuild_file_menu)
+        self._rebuild_file_menu()
         help_action = QAction("Getting Started...", self)
         help_action.triggered.connect(self._show_help_dialog)
         about_action = QAction("About Nebula Master", self)
@@ -378,6 +393,35 @@ class MainWindow(QMainWindow):
         self.dirty_label = QLabel("Clean")
         status.addWidget(self.status_label, 1)
         status.addPermanentWidget(self.dirty_label)
+
+    def _rebuild_file_menu(self) -> None:
+        if self.file_menu is None:
+            return
+        if (
+            self.new_project_action is None
+            or self.open_project_action is None
+            or self.export_screen_action is None
+            or self.export_print_action is None
+        ):
+            return
+        self.file_menu.clear()
+        self.file_menu.addAction(self.new_project_action)
+        self.file_menu.addAction(self.open_project_action)
+        recent_projects = list(MainWindow._recent_projects_this_session[:_MAX_RECENT_PROJECTS])
+        if recent_projects:
+            self.file_menu.addSeparator()
+            for project_path in recent_projects:
+                action = self.file_menu.addAction(_format_recent_project_label(project_path))
+                action.setData(str(project_path))
+                action.setProperty("recentProject", True)
+                action.triggered.connect(
+                    lambda _checked=False, recent_path=project_path: self._open_recent_project(
+                        recent_path
+                    )
+                )
+        self.file_menu.addSeparator()
+        self.file_menu.addAction(self.export_screen_action)
+        self.file_menu.addAction(self.export_print_action)
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget(self)
@@ -1179,6 +1223,31 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
         self._about_dialog = dialog
 
+    def _open_project_path(self, project_path: Path, *, async_preview: bool = True) -> bool:
+        if not self.view_model.open_project(project_path, async_preview=async_preview):
+            return False
+        self._record_recent_project(project_path)
+        return True
+
+    def _open_recent_project(self, project_path: Path) -> None:
+        if self._open_project_path(project_path, async_preview=True):
+            return
+        self._remove_recent_project(project_path)
+
+    def _record_recent_project(self, project_path: Path) -> None:
+        normalized = _normalize_project_root(project_path)
+        updated = [path for path in MainWindow._recent_projects_this_session if path != normalized]
+        updated.insert(0, normalized)
+        MainWindow._recent_projects_this_session = updated[:_MAX_RECENT_PROJECTS]
+        self._rebuild_file_menu()
+
+    def _remove_recent_project(self, project_path: Path) -> None:
+        normalized = _normalize_project_root(project_path)
+        MainWindow._recent_projects_this_session = [
+            path for path in MainWindow._recent_projects_this_session if path != normalized
+        ]
+        self._rebuild_file_menu()
+
     def _open_project_dialog(self) -> None:
         selected, _filter = QFileDialog.getOpenFileName(
             self,
@@ -1187,7 +1256,7 @@ class MainWindow(QMainWindow):
             "Nebula Project (project.yaml);;YAML Files (*.yaml *.yml)",
         )
         if selected:
-            self.view_model.open_project(Path(selected), async_preview=True)
+            self._open_project_path(Path(selected), async_preview=True)
 
     def _new_project_from_image_dialog(self) -> None:
         source_path, _filter = QFileDialog.getOpenFileName(
@@ -1238,7 +1307,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.view_model.open_project(project_file, async_preview=True)
+        self._open_project_path(project_file, async_preview=True)
 
     def _ensure_project_open(self) -> bool:
         if self.view_model.project_path is not None:
