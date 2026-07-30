@@ -644,6 +644,14 @@ class ProjectEditorViewModel(QObject):
     def has_queued_render(self) -> bool:
         return self._pending_preview_render
 
+    def shutdown(self) -> None:
+        self._debounce_timer.stop()
+        self._active_job_id += 1
+        self._pending_preview_render = False
+        self._thread_pool.clear()
+        self._thread_pool.waitForDone(5000)
+        self._preview_render_in_flight = False
+
     @property
     def is_sampling(self) -> bool:
         return self._sampling_mode

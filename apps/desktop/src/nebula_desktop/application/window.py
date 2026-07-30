@@ -2608,6 +2608,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self._confirm_unsaved_navigation("closing Nebula Master"):
+            self._adjustment_render_timer.stop()
+            self.view_model.shutdown()
             super().closeEvent(event)
             return
         event.ignore()
