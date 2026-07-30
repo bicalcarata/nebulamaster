@@ -41,6 +41,7 @@ OVERLAY_NON_TARGET_ALPHA: dict[SemanticOverlayMode, float] = {
     "nebula": 0.72,
     "dark_dust": 0.74,
 }
+EMPTY_STATE_MESSAGE = 'use "file/open project" or "file/new project from image" to start'
 
 
 @dataclass(frozen=True)
@@ -410,7 +411,7 @@ class ImagePreviewWidget(QWidget):
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
-                "Open a project to see an image.",
+                EMPTY_STATE_MESSAGE,
             )
             return
         rect, _scale = self._target_rect()

@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from project_model import PrintRenderProfile, ScreenRenderProfile
 from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap, QShowEvent
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -56,6 +65,7 @@ from nebula_desktop.viewmodels.project_editor import (
     SemanticOverlaySelection,
 )
 from nebula_desktop.views.image_preview import (
+    EMPTY_STATE_MESSAGE,
     ImagePreviewWidget,
     ImageSample,
     InteractionMode,
@@ -102,10 +112,13 @@ _SMOOTHING_UI_MAX = 100.0
 _PALETTE_UI_MIN = 0.0
 _PALETTE_UI_MAX = 100.0
 _HELP_SHOW_ON_STARTUP_KEY = "ui/show_help_on_startup"
+_RECENT_PROJECTS_KEY = "ui/recent_projects"
 _LEFT_PANEL_MIN_WIDTH = 220
 _CENTER_PANEL_MIN_WIDTH = 560
 _RIGHT_PANEL_MIN_WIDTH = 320
 _MAX_RECENT_PROJECTS = 5
+_RenderState = Literal["idle", "queued", "rendering", "ready", "cancelled", "failed"]
+_OpenProjectResult = Literal["opened", "cancelled", "failed"]
 _ADJUSTMENT_MENU_ITEMS: tuple[tuple[str, AdjustmentKind], ...] = tuple(
     sorted(
         (
@@ -283,7 +296,7 @@ class AboutDialog(QDialog):
 
 class MainWindow(QMainWindow):
     _startup_help_shown_this_session = False
-    _recent_projects_this_session: list[Path] = []
+    _recent_projects_this_session: list[Path] | None = None
 
     def __init__(self, project_path: Path | None = None) -> None:
         super().__init__()
@@ -302,6 +315,8 @@ class MainWindow(QMainWindow):
         self.open_project_action: QAction | None = None
         self.export_screen_action: QAction | None = None
         self.export_print_action: QAction | None = None
+        if MainWindow._recent_projects_this_session is None:
+            MainWindow._recent_projects_this_session = self._load_recent_projects_from_settings()
         self.view_model = ProjectEditorViewModel(self)
         self._build_ui()
         self._connect_signals()
@@ -389,10 +404,14 @@ class MainWindow(QMainWindow):
 
         status = QStatusBar(self)
         self.setStatusBar(status)
-        self.status_label = QLabel("Open a project to begin.")
-        self.dirty_label = QLabel("Clean")
+        self.status_label = QLabel(EMPTY_STATE_MESSAGE)
+        self.render_state_badge = QLabel("")
+        self.dirty_label = QLabel("")
         status.addWidget(self.status_label, 1)
+        status.addPermanentWidget(self.render_state_badge)
         status.addPermanentWidget(self.dirty_label)
+        self._update_dirty_indicators(False)
+        self._set_render_state("idle")
 
     def _rebuild_file_menu(self) -> None:
         if self.file_menu is None:
@@ -407,7 +426,9 @@ class MainWindow(QMainWindow):
         self.file_menu.clear()
         self.file_menu.addAction(self.new_project_action)
         self.file_menu.addAction(self.open_project_action)
-        recent_projects = list(MainWindow._recent_projects_this_session[:_MAX_RECENT_PROJECTS])
+        recent_projects = list(
+            (MainWindow._recent_projects_this_session or [])[:_MAX_RECENT_PROJECTS]
+        )
         if recent_projects:
             self.file_menu.addSeparator()
             for project_path in recent_projects:
@@ -630,7 +651,7 @@ class MainWindow(QMainWindow):
         self.preview_widget.setMinimumSize(0, 480)
         self.rendering_label = QLabel("")
         self.rendering_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.rendering_label.setStyleSheet("color: #9fb3c8;")
+        self.rendering_label.setMinimumHeight(28)
 
         toolbar.addLayout(toolbar_row_view)
         toolbar.addLayout(toolbar_row_compare)
@@ -1004,15 +1025,16 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel("Unsaved Changes")
-        title.setStyleSheet("font-weight: 600;")
+        self.changes_title_label = QLabel("No Unsaved Changes")
+        self.changes_title_label.setStyleSheet("font-weight: 600;")
         self.save_button = QPushButton("Keep Change")
         self.save_button.setSizePolicy(
             QSizePolicy.Policy.Fixed,
             QSizePolicy.Policy.Fixed,
         )
         self.save_button.setMinimumWidth(108)
-        header.addWidget(title)
+        self.save_button.setEnabled(False)
+        header.addWidget(self.changes_title_label)
         header.addWidget(self.save_button)
         header.addStretch(1)
 
@@ -1046,7 +1068,7 @@ class MainWindow(QMainWindow):
         self.view_model.adjustmentsChanged.connect(self._refresh_adjustments)
         self.view_model.regionsChanged.connect(self._refresh_regions)
         self.view_model.changesChanged.connect(self._refresh_changes)
-        self.view_model.statusChanged.connect(self.status_label.setText)
+        self.view_model.statusChanged.connect(self._on_status_changed)
         self.view_model.errorRaised.connect(self._show_error)
         self.view_model.dirtyChanged.connect(self._on_dirty_changed)
         self.view_model.samplingModeChanged.connect(self._on_sampling_mode_changed)
@@ -1223,29 +1245,98 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
         self._about_dialog = dialog
 
-    def _open_project_path(self, project_path: Path, *, async_preview: bool = True) -> bool:
+    def _load_recent_projects_from_settings(self) -> list[Path]:
+        raw_value = self._app_settings().value(_RECENT_PROJECTS_KEY, [])
+        if isinstance(raw_value, str):
+            candidates = [raw_value]
+        elif isinstance(raw_value, (list, tuple)):
+            candidates = [str(value) for value in raw_value]
+        elif raw_value is None:
+            candidates = []
+        else:
+            candidates = [str(raw_value)]
+
+        recent_projects: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = _normalize_project_root(Path(candidate))
+            marker = str(normalized)
+            if marker in seen or not normalized.exists():
+                continue
+            seen.add(marker)
+            recent_projects.append(normalized)
+            if len(recent_projects) >= _MAX_RECENT_PROJECTS:
+                break
+        return recent_projects
+
+    def _save_recent_projects_to_settings(self) -> None:
+        recent_projects = MainWindow._recent_projects_this_session or []
+        self._app_settings().setValue(
+            _RECENT_PROJECTS_KEY,
+            [str(path) for path in recent_projects[:_MAX_RECENT_PROJECTS]],
+        )
+
+    def _confirm_unsaved_navigation(self, action_label: str) -> bool:
+        if not self.view_model.dirty:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Unsaved Changes")
+        dialog.setText("This project has unsaved changes.")
+        dialog.setInformativeText(f"Save them before {action_label}?")
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(QMessageBox.StandardButton.Save)
+        choice = dialog.exec()
+        if choice == QMessageBox.StandardButton.Save:
+            return self.view_model.save_changes()
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+        self.status_label.setText(f"{action_label[:1].upper()}{action_label[1:]} cancelled.")
+        self._set_render_state("cancelled")
+        return False
+
+    def _open_project_path(
+        self,
+        project_path: Path,
+        *,
+        async_preview: bool = True,
+        confirm_action: str | None = None,
+    ) -> _OpenProjectResult:
+        if confirm_action is not None and not self._confirm_unsaved_navigation(confirm_action):
+            return "cancelled"
         if not self.view_model.open_project(project_path, async_preview=async_preview):
-            return False
+            return "failed"
         self._record_recent_project(project_path)
-        return True
+        return "opened"
 
     def _open_recent_project(self, project_path: Path) -> None:
-        if self._open_project_path(project_path, async_preview=True):
-            return
-        self._remove_recent_project(project_path)
+        result = self._open_project_path(
+            project_path,
+            async_preview=True,
+            confirm_action="opening another project",
+        )
+        if result == "failed":
+            self._remove_recent_project(project_path)
 
     def _record_recent_project(self, project_path: Path) -> None:
         normalized = _normalize_project_root(project_path)
-        updated = [path for path in MainWindow._recent_projects_this_session if path != normalized]
+        current = MainWindow._recent_projects_this_session or []
+        updated = [path for path in current if path != normalized]
         updated.insert(0, normalized)
         MainWindow._recent_projects_this_session = updated[:_MAX_RECENT_PROJECTS]
+        self._save_recent_projects_to_settings()
         self._rebuild_file_menu()
 
     def _remove_recent_project(self, project_path: Path) -> None:
         normalized = _normalize_project_root(project_path)
         MainWindow._recent_projects_this_session = [
-            path for path in MainWindow._recent_projects_this_session if path != normalized
+            path for path in (MainWindow._recent_projects_this_session or []) if path != normalized
         ]
+        self._save_recent_projects_to_settings()
         self._rebuild_file_menu()
 
     def _open_project_dialog(self) -> None:
@@ -1256,7 +1347,11 @@ class MainWindow(QMainWindow):
             "Nebula Project (project.yaml);;YAML Files (*.yaml *.yml)",
         )
         if selected:
-            self._open_project_path(Path(selected), async_preview=True)
+            self._open_project_path(
+                Path(selected),
+                async_preview=True,
+                confirm_action="opening another project",
+            )
 
     def _new_project_from_image_dialog(self) -> None:
         source_path, _filter = QFileDialog.getOpenFileName(
@@ -1284,6 +1379,8 @@ class MainWindow(QMainWindow):
             text=default_name,
         )
         if not accepted:
+            return
+        if not self._confirm_unsaved_navigation("creating and opening a new project"):
             return
 
         try:
@@ -1610,6 +1707,7 @@ class MainWindow(QMainWindow):
             self.changes_list.addItem(item)
         if changes:
             self.changes_list.setCurrentRow(0)
+        self._update_changes_header(len(changes))
 
     def _apply_adjustment_summary(self, summary: AdjustmentSummary | None) -> None:
         if summary is None:
@@ -2351,10 +2449,72 @@ class MainWindow(QMainWindow):
         if details:
             dialog.setDetailedText(details)
         dialog.exec()
+        self._set_render_state("failed")
+
+    def _update_dirty_indicators(self, dirty: bool | None = None) -> None:
+        is_dirty = self.view_model.dirty if dirty is None else dirty
+        self.dirty_label.setText("Unsaved changes" if is_dirty else "All changes saved")
+        self.save_button.setEnabled(is_dirty)
+        self.setWindowTitle(f"Nebula Master Desktop{' *' if is_dirty else ''}")
+
+    def _update_changes_header(self, count: int | None = None) -> None:
+        total = len(self.view_model.unsaved_changes()) if count is None else count
+        if total <= 0:
+            self.changes_title_label.setText("No Unsaved Changes")
+            return
+        suffix = "Change" if total == 1 else "Changes"
+        self.changes_title_label.setText(f"{total} Unsaved {suffix}")
+
+    def _set_render_state(self, state: _RenderState) -> None:
+        labels: dict[_RenderState, str] = {
+            "idle": "Idle",
+            "queued": "Queued",
+            "rendering": "Rendering",
+            "ready": "Ready",
+            "cancelled": "Cancelled",
+            "failed": "Failed",
+        }
+        styles: dict[_RenderState, tuple[str, str]] = {
+            "idle": ("#9fb3c8", "#1f2a36"),
+            "queued": ("#f4c542", "#3d3213"),
+            "rendering": ("#60a5fa", "#13293d"),
+            "ready": ("#34d399", "#123129"),
+            "cancelled": ("#f59e0b", "#3b2a12"),
+            "failed": ("#f87171", "#401b1b"),
+        }
+        foreground, background = styles[state]
+        label = labels[state]
+        style = (
+            f"color: {foreground}; background-color: {background};"
+            " border-radius: 10px; font-weight: 600; padding: 4px 10px;"
+        )
+        self.render_state_badge.setText(f"Preview {label}")
+        self.render_state_badge.setStyleSheet(style)
+        self.rendering_label.setText(f"Preview {label}")
+        self.rendering_label.setStyleSheet(style)
+
+    def _on_status_changed(self, message: str) -> None:
+        self.status_label.setText(message)
+        lower_message = message.strip().lower()
+        if message == EMPTY_STATE_MESSAGE:
+            self._set_render_state("idle")
+        elif message == "Rendering preview...":
+            self._set_render_state("queued" if not self.view_model.is_rendering else "rendering")
+        elif message == "Preview updated.":
+            self._set_render_state("ready")
+        elif message == "Preview failed.":
+            self._set_render_state("failed")
+        elif "cancelled" in lower_message:
+            self._set_render_state("cancelled")
+        elif (
+            self.view_model.current_display_image() is not None
+            and not self.view_model.is_rendering
+        ):
+            self._set_render_state("ready")
 
     def _on_dirty_changed(self, dirty: bool) -> None:
-        self.dirty_label.setText("Unsaved changes" if dirty else "Clean")
-        self.setWindowTitle(f"Nebula Master Desktop{' *' if dirty else ''}")
+        self._update_dirty_indicators(dirty)
+        self._update_changes_header()
 
     def _on_sampling_mode_changed(self, enabled: bool) -> None:
         with QSignalBlocker(self.pick_button):
@@ -2372,7 +2532,16 @@ class MainWindow(QMainWindow):
         self.preview_widget.set_interaction_mode("sampling" if enabled else "navigate")
 
     def _on_busy_changed(self, busy: bool) -> None:
-        self.rendering_label.setText("Rendering preview..." if busy else "")
+        if busy:
+            self._set_render_state("rendering")
+            return
+        if self.view_model.has_queued_render:
+            self._set_render_state("queued")
+            return
+        if self.view_model.current_display_image() is not None:
+            self._set_render_state("ready")
+            return
+        self._set_render_state("idle")
 
     def _on_selection_changed(self, selection_kind: str) -> None:
         if selection_kind == "region":
@@ -2436,6 +2605,12 @@ class MainWindow(QMainWindow):
         self.palette_balance_toggle_button.setToolTip(
             "Expand Colour Balance" if collapsed else "Collapse Colour Balance"
         )
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self._confirm_unsaved_navigation("closing Nebula Master"):
+            super().closeEvent(event)
+            return
+        event.ignore()
 
     def _configure_left_panel_action_icons(self) -> None:
         style = self.style()

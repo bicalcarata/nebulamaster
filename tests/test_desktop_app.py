@@ -24,6 +24,7 @@ from nebula_desktop.application.window import (
 )
 from nebula_desktop.viewmodels.project_editor import AdjustmentKind, ProjectEditorViewModel
 from nebula_desktop.views.image_preview import (
+    EMPTY_STATE_MESSAGE,
     ImagePreviewWidget,
     ImageSample,
     semantic_overlay_rgba,
@@ -38,7 +39,7 @@ from project_model import (
     SaturationTransform,
     ShiftColourPointTransform,
 )
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QSettings, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 
@@ -89,6 +90,17 @@ def _preview_sample(view_model: ProjectEditorViewModel) -> ImageSample:
     return ImageSample(x=0, y=0, rgb=rgb)
 
 
+def _use_temp_settings(monkeypatch: Any, tmp_path: Path) -> Path:
+    settings_path = tmp_path / "desktop-settings.ini"
+
+    def _settings(self: MainWindow) -> QSettings:
+        return QSettings(str(settings_path), QSettings.Format.IniFormat)
+
+    monkeypatch.setattr(MainWindow, "_app_settings", _settings)
+    MainWindow._recent_projects_this_session = None
+    return settings_path
+
+
 def test_desktop_opens_valid_project_headless(qtbot: Any, tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     window = MainWindow(project_dir)
@@ -98,6 +110,7 @@ def test_desktop_opens_valid_project_headless(qtbot: Any, tmp_path: Path) -> Non
 
     assert window.project_name_label.text() == "Horsehead Demo"
     assert window.view_model.current_display_image() is not None
+    assert window.render_state_badge.text() == "Preview Ready"
 
 
 def test_main_window_uses_resizable_three_panel_splitter_and_fullscreen_launch(
@@ -223,6 +236,42 @@ def test_open_project_dialog_accepts_project_yaml(
     assert window.project_name_label.text() == "Horsehead Demo"
 
 
+def test_open_project_dialog_keeps_current_project_when_unsaved_navigation_cancelled(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source = Path("examples/valid/minimal-project")
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    shutil.copytree(source, project_a)
+    shutil.copytree(source, project_b)
+    project_b_file = project_b / "project.yaml"
+    window = MainWindow(project_a)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("cyan")
+    assert window.view_model.dirty is True
+    assert window.view_model.project_path == _normalize_project_root(project_a)
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(project_b_file), "Nebula Project (project.yaml)"),
+    )
+    monkeypatch.setattr(
+        MainWindow,
+        "_confirm_unsaved_navigation",
+        lambda self, action_label: False,
+    )
+
+    window._open_project_dialog()
+
+    assert window.view_model.project_path == _normalize_project_root(project_a)
+
+
 def test_file_menu_tracks_five_most_recent_projects_during_runtime(
     qtbot: Any,
     tmp_path: Path,
@@ -240,13 +289,14 @@ def test_file_menu_tracks_five_most_recent_projects_during_runtime(
     window.show()
 
     for project_path in project_paths:
-        assert window._open_project_path(project_path, async_preview=False) is True
+        assert window._open_project_path(project_path, async_preview=False) == "opened"
 
     expected = [
         _normalize_project_root(path) for path in reversed(project_paths)
     ][:_MAX_RECENT_PROJECTS]
     assert MainWindow._recent_projects_this_session == expected
 
+    assert window.file_menu is not None
     recent_actions = [
         action for action in window.file_menu.actions() if action.property("recentProject") is True
     ]
@@ -256,7 +306,7 @@ def test_file_menu_tracks_five_most_recent_projects_during_runtime(
         _format_recent_project_label(path) for path in expected
     ]
 
-    assert window._open_project_path(project_paths[2], async_preview=False) is True
+    assert window._open_project_path(project_paths[2], async_preview=False) == "opened"
     selected_path = _normalize_project_root(project_paths[2])
     reordered = [
         selected_path,
@@ -280,9 +330,10 @@ def test_recent_project_menu_action_reopens_project(
     qtbot.addWidget(window)
     window.show()
 
-    assert window._open_project_path(project_a, async_preview=False) is True
-    assert window._open_project_path(project_b, async_preview=False) is True
+    assert window._open_project_path(project_a, async_preview=False) == "opened"
+    assert window._open_project_path(project_b, async_preview=False) == "opened"
 
+    assert window.file_menu is not None
     recent_actions = [
         action for action in window.file_menu.actions() if action.property("recentProject") is True
     ]
@@ -292,6 +343,65 @@ def test_recent_project_menu_action_reopens_project(
 
     assert window.view_model.project_path == _normalize_project_root(project_a)
     assert MainWindow._recent_projects_this_session[0] == _normalize_project_root(project_a)
+
+
+def test_recent_projects_persist_across_sessions(
+    monkeypatch: Any,
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    _use_temp_settings(monkeypatch, tmp_path)
+    source = Path("examples/valid/minimal-project")
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    shutil.copytree(source, project_a)
+    shutil.copytree(source, project_b)
+
+    first = MainWindow()
+    qtbot.addWidget(first)
+    first.show()
+    assert first._open_project_path(project_a, async_preview=False) == "opened"
+    assert first._open_project_path(project_b, async_preview=False) == "opened"
+
+    MainWindow._recent_projects_this_session = None
+    second = MainWindow()
+    qtbot.addWidget(second)
+    second.show()
+
+    assert second.file_menu is not None
+    recent_actions = [
+        action for action in second.file_menu.actions() if action.property("recentProject") is True
+    ]
+    expected = [
+        _normalize_project_root(project_b),
+        _normalize_project_root(project_a),
+    ]
+    assert [Path(cast(str, action.data())) for action in recent_actions] == expected
+
+
+def test_empty_state_guidance_and_unsaved_header_reflect_project_state(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    MainWindow._recent_projects_this_session = []
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.status_label.text() == EMPTY_STATE_MESSAGE
+    assert window.changes_title_label.text() == "No Unsaved Changes"
+    assert window.save_button.isEnabled() is False
+
+    project_dir = _copy_example_project(tmp_path)
+    assert window._open_project_path(project_dir, async_preview=False) == "opened"
+    window.view_model.create_adjustment("cyan")
+    qtbot.waitUntil(
+        lambda: window.changes_title_label.text() != "No Unsaved Changes",
+        timeout=5000,
+    )
+
+    assert "Unsaved Change" in window.changes_title_label.text()
+    assert window.save_button.isEnabled() is True
 
 
 def test_help_button_opens_help_dialog(

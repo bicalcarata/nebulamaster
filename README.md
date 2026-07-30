@@ -19,7 +19,7 @@ source image is never modified.
 - Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
 - Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
-## What’s New In 0.5.0
+## What’s New In 0.5.1
 
 - `Dark Nebula Processing` is now a first-class ordered adjustment that targets `Dark Dust`.
 - Faux palette adjustments now expose per-colour balance controls so palettes can be tuned instead of only mixed wet/dry.
@@ -27,6 +27,10 @@ source image is never modified.
 - Regions remain part of the normal declarative adjustment flow and can be drawn, named, reused and applied to existing adjustments.
 - Star overlays, nebula overlays and dark-dust overlays continue to use the same semantic masks that drive the actual renderer.
 - Print export is now documented more clearly as a shared-renderer workflow with physical dimensions, DPI and preserve-pixels upscaling.
+- Recently opened projects now persist across sessions through the `File` menu instead of only during the current launch.
+- Opening another project, creating a new project, or closing the app now prompts to save, discard, or cancel if there are unsaved semantic changes.
+- Preview state is now clearer while working, with explicit `Queued`, `Rendering`, `Ready`, `Cancelled`, and `Failed` feedback instead of a mostly static footer.
+- Empty projects now guide the user directly towards `File/Open Project` or `File/New Project from Image`.
 
 ## Why Nebula Master?
 
@@ -85,14 +89,14 @@ That means you can do things like:
 - push a colour treatment into one visible cloud
 - soften or brighten only the selected area of a target
 
-## The 0.5.0 Desktop Workflow
+## The 0.5.1 Desktop Workflow
 
 ### Ordered adjustments and palette tuning
 
 The main desktop view keeps the project, adjustment stack, preview, semantic toolbar and
 inspector visible at the same time.
 
-Faux palette adjustments behave like any other adjustment in the ordered chain. In 0.5.0 they
+Faux palette adjustments behave like any other adjustment in the ordered chain. In 0.5.1 they
 also expose palette-specific colour-balance controls in the inspector.
 
 ![Desktop with Faux Hubble colour balance](docs/images/readme/desktop-main-0-5-0.png)
@@ -133,6 +137,16 @@ supports physical dimensions, units, target DPI and preserve-pixels upscaling.
 The desktop adjustment menu now makes the available mastering tools clearer up front.
 
 ![Add adjustment menu](docs/images/readme/add-adjustment-menu-0-5-0.png)
+
+### Smoother day-to-day editing
+
+The desktop app now does more of the small things users expect from a real editor:
+
+- recent projects remain available across restarts
+- unsaved project changes are confirmed before destructive navigation
+- the preview area reports whether rendering is queued, active, ready, cancelled, or failed
+- the unsaved-changes area reflects whether the project is currently clean or dirty
+- a blank workspace tells the user exactly how to start
 
 ## Current Adjustment Types
 
@@ -231,6 +245,8 @@ The desktop app includes built-in help for first-time users:
 - a first-run help popup
 - a `Do not display this window again` option
 - an `About Nebula Master` dialog with version and support links
+- clearer startup guidance when no project is open
+- recent project reopening through the `File` menu across app sessions
 
 There is also a PDF quick-start guide here:
 
@@ -346,9 +362,9 @@ The repository includes GitHub Actions for:
 
 For a normal versioned release:
 
-1. Bump the repo version, for example to `0.5.0`.
+1. Bump the repo version, for example to `0.5.1`.
 2. Push the commit to GitHub.
-3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.0`.
+3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.1`.
 4. Let `Package Desktop` build the macOS and Windows artifacts for that tag.
 5. Publish the immutable release once the artifacts are attached.
 

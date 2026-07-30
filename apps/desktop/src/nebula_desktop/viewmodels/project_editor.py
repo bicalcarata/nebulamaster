@@ -637,6 +637,14 @@ class ProjectEditorViewModel(QObject):
         return self._semantic_overlay_mode
 
     @property
+    def is_rendering(self) -> bool:
+        return self._preview_render_in_flight
+
+    @property
+    def has_queued_render(self) -> bool:
+        return self._pending_preview_render
+
+    @property
     def is_sampling(self) -> bool:
         return self._sampling_mode
 
