@@ -383,3 +383,11 @@ Useful feedback includes:
 - what you expected
 - what actually happened
 - screenshots or project files where useful
+
+## Copyright
+
+Copyright © 2026 D Randall. All rights reserved.
+
+NebulaMaster is currently released without an open-source licence. The source code is publicly
+visible for transparency and community feedback, but no permission is granted to copy, modify, or
+redistribute the software except as permitted by applicable copyright law.
