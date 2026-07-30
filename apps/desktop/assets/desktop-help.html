@@ -45,98 +45,206 @@
   <body>
     <h1>Nebula Master Desktop Help</h1>
     <p>
-      Nebula Master is a declarative image mastering tool. You work from an
-      immutable source image, create ordered adjustments, preview the result,
-      and export renders when you are ready.
+      Nebula Master is a declarative image mastering tool for nebula and
+      dark-nebula images. You open or create a project, build an ordered stack
+      of adjustments, preview the result, then export a render when you are
+      ready. The source image stays untouched. The project metadata is the real
+      saved work.
     </p>
 
-    <h2>Quick Start</h2>
+    <div class="note">
+      Think of Nebula Master as a project editor, not a destructive paint tool.
+      Saving writes adjustment intent to the project. Preview and export images
+      can be regenerated at any time.
+    </div>
+
+    <h2>What You See in the Main Window</h2>
+    <ul>
+      <li><strong>Left panel:</strong> project details, source images, adjustments, regions.</li>
+      <li><strong>Center panel:</strong> image preview, overlays, compare controls, zoom, sampling.</li>
+      <li><strong>Right panel:</strong> settings for the currently selected adjustment and Dark Dust controls.</li>
+      <li><strong>Bottom panel:</strong> unsaved semantic changes and the <code>Keep Change</code> button.</li>
+    </ul>
+
+    <h2>Create a New Project from an Image</h2>
     <ol>
       <li>Choose <code>File → New Project from Image…</code>.</li>
-      <li>Select a TIFF, PNG, JPEG, or TIFF source image.</li>
+      <li>Select a TIFF, PNG, or JPEG source image.</li>
       <li>Choose the parent folder where Nebula Master should create the project.</li>
-      <li>Enter a project folder name when prompted.</li>
-      <li>Nebula Master copies the source image into the new project and opens it.</li>
+      <li>Enter the new project folder name when prompted.</li>
+      <li>Nebula Master creates the project folder, copies the source image into it, and opens the project.</li>
     </ol>
 
-    <div class="note">
-      Nebula Master creates a project folder for you. The source image becomes
-      part of that project, and later preview and export files can be recreated
-      at any time.
-    </div>
+    <p>
+      This is the normal first-time workflow. If you start with only an image
+      and no existing project, Nebula Master will guide you through creating the
+      project structure for that image.
+    </p>
 
     <h2>Open an Existing Project</h2>
     <ol>
       <li>Choose <code>File → Open Project…</code>.</li>
       <li>Select the project’s <code>project.yaml</code> file.</li>
-      <li>The project, its adjustments, regions, and preview state will load.</li>
+      <li>The project, adjustments, regions, semantic settings, and preview state will load.</li>
     </ol>
 
-    <h2>Add and Edit Adjustments</h2>
+    <p>
+      The File menu also shows up to five recently opened projects during the
+      current app session for quicker reopening.
+    </p>
+
+    <h2>Basic Adjustment Workflow</h2>
     <ol>
-      <li>Click <code>Add</code> in the Adjustments panel.</li>
-      <li>Choose the adjustment type you want to add.</li>
-      <li>Select the new adjustment in the list.</li>
+      <li>Click <code>Add</code> in the Adjustments section.</li>
+      <li>Choose the adjustment type from the menu.</li>
+      <li>Select the adjustment in the list on the left.</li>
       <li>Use the right-hand inspector to change its settings.</li>
-      <li>Use <code>Affects</code> to target Combined Image, Nebula, Stars, or Dark Dust.</li>
-      <li>Use <code>Apply in</code> to keep the adjustment global or assign it to one or more regions.</li>
+      <li>Use the arrow buttons to move the adjustment earlier or later in the stack.</li>
+      <li>Use duplicate, remove, or reset if you want to branch or refine the adjustment.</li>
     </ol>
+
+    <p>
+      Adjustment order matters. Every adjustment works on the image state
+      produced by the adjustments above it unless the rule explicitly uses the
+      original image for selection.
+    </p>
+
+    <h2>Available Adjustment Types</h2>
+    <ul>
+      <li>Colour adjustments such as Red, Green, Blue, Cyan, Yellow.</li>
+      <li>Tonal adjustments such as Brightness, Black Point, Shadows, Levels, Saturation.</li>
+      <li>Texture and finish adjustments such as Colour Smoothness.</li>
+      <li>Creative palette adjustments such as Faux Hubble, Faux HOO, Foraxx-Inspired, Gold &amp; Cyan, and Natural Bi-colour.</li>
+      <li>Dark Nebula Processing for dark dust and translucent obscuring structure.</li>
+    </ul>
 
     <h2>Create an Adjustment from the Image</h2>
     <ol>
       <li>Click <code>Create Adjustment from Selection</code>.</li>
-      <li>Click a visible feature in the preview.</li>
+      <li>Click a visible feature in the image preview.</li>
       <li>Choose the adjustment type from the prompt.</li>
-      <li>Nebula Master creates a normal adjustment at the end of the stack.</li>
+      <li>Nebula Master creates a normal declarative adjustment at the end of the stack.</li>
     </ol>
+
+    <p>
+      This is a fast way to start from a real image feature instead of building
+      a new adjustment entirely by hand.
+    </p>
+
+    <h2>Pick Colour Points</h2>
+    <p>
+      Colour-based adjustments can use <code>Pick ... Point</code> to sample a
+      visible colour directly from the preview. This selected point becomes the
+      midpoint for that adjustment’s colour selection. Moving the amount slider
+      then increases or reduces the influence around that sampled colour family.
+    </p>
+
+    <h2>Choose What an Adjustment Affects</h2>
+    <p>
+      Every adjustment can target one of the semantic image views shown in
+      <code>Affects</code>:
+    </p>
+    <ul>
+      <li><strong>Combined Image:</strong> affect everything.</li>
+      <li><strong>Nebula:</strong> bias the adjustment towards nebula structure.</li>
+      <li><strong>Stars:</strong> bias the adjustment towards stars only.</li>
+      <li><strong>Dark Dust:</strong> bias the adjustment towards detected dark dust structure.</li>
+    </ul>
+
+    <h2>Dark Dust and Dark Nebula Processing</h2>
+    <p>
+      Nebula Master can generate a Dark Dust semantic mask and use it either as
+      an overlay or as the target for normal adjustments.
+    </p>
+    <ul>
+      <li>Use <code>Overlay</code> to inspect the current Dark Dust or Stars view.</li>
+      <li>Use the collapsible <strong>Dark Dust Mask</strong> section in the right panel to tune the global dark-dust detection.</li>
+      <li>Use <strong>Dark Nebula Processing</strong> when you want a dedicated adjustment that reveals faint dark-nebula structure while preserving denser cores.</li>
+    </ul>
+
+    <p>
+      If a Dark Dust-targeted result looks wrong, check both the adjustment
+      itself and the underlying Dark Dust Mask settings.
+    </p>
 
     <h2>Regions</h2>
     <ol>
-      <li>Click <code>Add Region</code>.</li>
+      <li>Click <code>Add</code> in the Regions section.</li>
       <li>Click points in the preview to draw the polygon.</li>
-      <li>Finish the region and then select it from the Regions list.</li>
-      <li>Adjust edge softness if you want a feathered transition.</li>
-      <li>Assign adjustments to that region from the inspector.</li>
+      <li>Finish the shape and select it from the Regions list.</li>
+      <li>Adjust softness if you want a feathered transition.</li>
+      <li>Assign one or more adjustments to that region using <code>Apply in</code>.</li>
     </ol>
 
-    <h2>Preview Controls</h2>
+    <p>
+      Regions do not replace colour targeting. They are an extra spatial limit.
+      You can combine region membership with Nebula, Stars, Dark Dust, and
+      colour-point based selection.
+    </p>
+
+    <h2>Preview, Overlays, and Comparison</h2>
     <ul>
       <li><code>Show Preview</code> displays the current mastered result.</li>
       <li><code>Show Source</code> displays the source image.</li>
-      <li><code>Overlay</code> shows semantic masks such as Stars, Nebula, or Dark Dust.</li>
-      <li><code>Before / After</code> and <code>Hold Previous</code> help compare working changes.</li>
+      <li><code>Overlay</code> shows semantic views such as Off, Stars, Nebula, or Dark Dust.</li>
+      <li><code>Before / After</code> compares current work to the saved state.</li>
+      <li><code>Hold Previous</code> temporarily holds the previous rendered state for comparison.</li>
       <li><code>Fit</code>, <code>100%</code>, <code>−</code>, and <code>+</code> control zoom.</li>
     </ul>
 
+    <h2>Palette Adjustments</h2>
+    <p>
+      Faux palette adjustments work like normal adjustments in the stack. The
+      main amount control acts as a wet/dry mix between the incoming image and
+      the fully mapped palette result. Some palettes also expose per-colour
+      balance controls for finer tuning.
+    </p>
+
     <h2>Save Working Changes</h2>
     <p>
-      The bottom panel lists unsaved semantic changes. Click
-      <code>Keep Change</code> to write the edited project metadata back to disk.
-      This saves the project state, not a rendered image file.
+      The bottom panel lists unsaved semantic changes such as added adjustments,
+      changed targets, palette balance edits, reordered rules, and region
+      updates. Click <code>Keep Change</code> to save those project metadata
+      edits back to disk.
     </p>
+
+    <div class="note">
+      <strong>Keep Change</strong> saves the project state. It does not export a
+      finished render file.
+    </div>
 
     <h2>Export an Image</h2>
     <ol>
       <li>Choose <code>File → Export for Screen…</code> or <code>File → Export for Print…</code>.</li>
       <li>Select the output format and size.</li>
       <li>Choose the destination path.</li>
-      <li>Nebula Master renders the current adjustment stack to that output.</li>
+      <li>Nebula Master renders the current adjustment stack through the shared renderer.</li>
     </ol>
 
-    <h2>Project Model</h2>
-    <ul>
-      <li>The project file is the source of truth.</li>
-      <li>Source images are immutable inputs.</li>
-      <li>Preview and export files are disposable render artefacts.</li>
-      <li>Adjustment order matters and remains editable.</li>
-    </ul>
+    <p>
+      Screen export is for PNG, JPEG, or TIFF outputs sized for display. Print
+      export adds physical dimensions and target DPI so you can generate output
+      appropriate for printing.
+    </p>
 
-    <h2>Tips</h2>
+    <h2>A Good First Workflow</h2>
+    <ol>
+      <li>Create or open a project.</li>
+      <li>Inspect the image with overlays off.</li>
+      <li>Check semantic overlays such as Stars or Dark Dust if needed.</li>
+      <li>Add one broad adjustment, then preview the result.</li>
+      <li>Add more targeted adjustments using colour points, semantic targets, or regions.</li>
+      <li>Review the unsaved changes panel and click <code>Keep Change</code>.</li>
+      <li>Export for screen or print when the project looks right.</li>
+    </ol>
+
+    <h2>Troubleshooting</h2>
     <ul>
-      <li>Start with broad adjustments, then add targeted regional refinements.</li>
-      <li>Use semantic overlays to understand what Nebula Master is targeting.</li>
-      <li>If a result looks wrong, check the adjustment order and the selected target.</li>
-      <li>Use the Help button at any time to reopen this guide.</li>
+      <li>If a result looks wrong, first check the selected adjustment target and adjustment order.</li>
+      <li>If a region-limited adjustment seems too broad, verify the assigned region and its softness.</li>
+      <li>If a Dark Dust-targeted result is odd, inspect the overlay and Dark Dust Mask settings before changing the adjustment further.</li>
+      <li>If you want to compare against the source, use <code>Show Source</code> or <code>Before / After</code>.</li>
+      <li>Use the Help button any time to reopen this guide.</li>
     </ul>
   </body>
 </html>
