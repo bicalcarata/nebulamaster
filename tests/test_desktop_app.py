@@ -17,6 +17,7 @@ from nebula_desktop.application.window import (
     AboutDialog,
     MainWindow,
     _brightness_amount_to_ui,
+    _sorted_adjustment_menu_items,
 )
 from nebula_desktop.viewmodels.project_editor import AdjustmentKind, ProjectEditorViewModel
 from nebula_desktop.views.image_preview import (
@@ -187,6 +188,14 @@ def test_add_region_button_stays_next_to_regions_label(
     assert button_geometry.top() < window.regions_list.geometry().top()
     assert button_geometry.left() < window.regions_list.geometry().left() + 180
     assert button_geometry.left() < window.show_regions_checkbox.geometry().left()
+
+
+def test_add_adjustment_menu_labels_are_clean_and_sorted() -> None:
+    labels = [label for label, _kind in _sorted_adjustment_menu_items()]
+
+    assert labels == sorted(labels, key=str.lower)
+    assert all(not label.startswith("Add ") for label in labels)
+    assert all(" adjustment" not in label.lower() for label in labels)
 
 
 def test_open_project_dialog_accepts_project_yaml(

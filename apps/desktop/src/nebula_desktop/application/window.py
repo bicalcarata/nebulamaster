@@ -105,6 +105,30 @@ _HELP_SHOW_ON_STARTUP_KEY = "ui/show_help_on_startup"
 _LEFT_PANEL_MIN_WIDTH = 220
 _CENTER_PANEL_MIN_WIDTH = 560
 _RIGHT_PANEL_MIN_WIDTH = 320
+_ADJUSTMENT_MENU_ITEMS: tuple[tuple[str, AdjustmentKind], ...] = tuple(
+    sorted(
+        (
+            ("Black Point", "black"),
+            ("Shadows", "shadows"),
+            ("Blue", "blue"),
+            ("Red", "red"),
+            ("Green", "green"),
+            ("Cyan", "cyan"),
+            ("Yellow", "yellow"),
+            ("Brightness", "brightness"),
+            ("Levels", "levels"),
+            ("Saturation", "saturation"),
+            ("Colour Smoothness", "smoothness"),
+            ("Faux Hubble", "faux_hubble"),
+            ("Faux HOO", "faux_hoo"),
+            ("Foraxx-Inspired", "foraxx"),
+            ("Gold & Cyan", "gold_cyan"),
+            ("Natural Bi-colour", "natural_bicolour"),
+            ("Dark Nebula Processing", "dark_nebula_processing"),
+        ),
+        key=lambda item: item[0].lower(),
+    )
+)
 
 
 def _tinted_standard_icon(
@@ -123,6 +147,10 @@ def _tinted_standard_icon(
     painter.fillRect(tinted.rect(), color)
     painter.end()
     return QIcon(tinted)
+
+
+def _sorted_adjustment_menu_items() -> tuple[tuple[str, AdjustmentKind], ...]:
+    return _ADJUSTMENT_MENU_ITEMS
 
 
 def _brightness_amount_to_ui(amount: float) -> float:
@@ -1366,62 +1394,11 @@ class MainWindow(QMainWindow):
 
     def _show_add_adjustment_menu(self) -> None:
         menu = QMenu(self)
-        menu.addAction(
-            "Add Black Point adjustment",
-            lambda: self.view_model.create_adjustment("black"),
-        )
-        menu.addAction(
-            "Add Shadows adjustment",
-            lambda: self.view_model.create_adjustment("shadows"),
-        )
-        menu.addAction("Add Blue adjustment", lambda: self.view_model.create_adjustment("blue"))
-        menu.addAction("Add Red adjustment", lambda: self.view_model.create_adjustment("red"))
-        menu.addAction("Add Green adjustment", lambda: self.view_model.create_adjustment("green"))
-        menu.addAction("Add Cyan adjustment", lambda: self.view_model.create_adjustment("cyan"))
-        menu.addAction(
-            "Add Yellow adjustment",
-            lambda: self.view_model.create_adjustment("yellow"),
-        )
-        menu.addAction(
-            "Add Brightness adjustment",
-            lambda: self.view_model.create_adjustment("brightness"),
-        )
-        menu.addAction(
-            "Add Levels adjustment",
-            lambda: self.view_model.create_adjustment("levels"),
-        )
-        menu.addAction(
-            "Add Saturation adjustment",
-            lambda: self.view_model.create_adjustment("saturation"),
-        )
-        menu.addAction(
-            "Add Colour Smoothness adjustment",
-            lambda: self.view_model.create_adjustment("smoothness"),
-        )
-        menu.addAction(
-            "Add Faux Hubble adjustment",
-            lambda: self.view_model.create_adjustment("faux_hubble"),
-        )
-        menu.addAction(
-            "Add Faux HOO adjustment",
-            lambda: self.view_model.create_adjustment("faux_hoo"),
-        )
-        menu.addAction(
-            "Add Foraxx-Inspired adjustment",
-            lambda: self.view_model.create_adjustment("foraxx"),
-        )
-        menu.addAction(
-            "Add Gold & Cyan adjustment",
-            lambda: self.view_model.create_adjustment("gold_cyan"),
-        )
-        menu.addAction(
-            "Add Natural Bi-colour adjustment",
-            lambda: self.view_model.create_adjustment("natural_bicolour"),
-        )
-        menu.addAction(
-            "Add Dark Nebula Processing adjustment",
-            lambda: self.view_model.create_adjustment("dark_nebula_processing"),
-        )
+        for label, kind in _sorted_adjustment_menu_items():
+            menu.addAction(
+                label,
+                lambda selected_kind=kind: self.view_model.create_adjustment(selected_kind),
+            )
         menu.exec(self.add_adjustment_button.mapToGlobal(self.add_adjustment_button.rect().bottomLeft()))
 
     def _on_project_loaded(self, project_name: str) -> None:
