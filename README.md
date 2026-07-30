@@ -38,7 +38,7 @@ source image is never modified.
 
 Nebula Master is for the image that already came out of:
 
-- Dwarf
+- Dwarflabs
 - Seestar
 - Vaonis
 - another smart telescope
