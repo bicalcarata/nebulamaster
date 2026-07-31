@@ -330,13 +330,14 @@ def apply_colour_amount(
     original_luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0]))
     transformed = linear.copy()
     channel_index = CHANNEL_INDEX[channel]
-    delta = amount - 1.0
     transformed[..., channel_index] = np.clip(
-        transformed[..., channel_index] + (delta * weights),
+        transformed[..., channel_index] * amount,
         0.0,
         1.0,
     )
-    if preserve_luminance:
+    # When reducing a colour family, preserving full luminance can push the remaining
+    # channels too aggressively and create an unintended complementary cast.
+    if preserve_luminance and amount >= 1.0:
         transformed = _preserve_luminance(transformed, original_luminance)
     return apply_weighted_image_blend(current_rgb, transformed, weights)
 

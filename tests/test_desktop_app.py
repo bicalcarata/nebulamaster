@@ -597,6 +597,79 @@ def test_first_adjustment_switches_editor_from_region_to_adjustment(
     assert window.panel_heading.text() == "Adjustment: Red"
 
 
+def test_structural_adjustment_changes_clear_stale_interaction_and_refresh_list(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.tiff"
+    _create_source_image(source_path)
+    parent_dir = tmp_path / "library"
+    parent_dir.mkdir()
+    project_file = scaffold_project_from_image(
+        source_path=source_path,
+        destination_parent=parent_dir,
+        project_name="Interaction Refresh Test",
+    )
+
+    window = MainWindow(project_file.parent)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("natural_bicolour")
+    assert window.adjustments_list.count() == 1
+
+    window.view_model.set_adjustment_interaction_active(True)
+    window.view_model.create_adjustment("shadows")
+
+    assert window.view_model.is_adjustment_interacting is False
+    assert window.adjustments_list.count() == 2
+    assert [
+        window.adjustments_list.item(index).text()
+        for index in range(window.adjustments_list.count())
+    ] == [
+        "✓ Natural Bi-colour • Nebula",
+        "✓ Shadows • Combined Image",
+    ]
+    assert window.panel_heading.text() == "Adjustment: Shadows"
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Shadows"
+
+
+def test_removed_adjustment_refreshes_heading_to_remaining_selection(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.tiff"
+    _create_source_image(source_path)
+    parent_dir = tmp_path / "library"
+    parent_dir.mkdir()
+    project_file = scaffold_project_from_image(
+        source_path=source_path,
+        destination_parent=parent_dir,
+        project_name="Removal Refresh Test",
+    )
+
+    window = MainWindow(project_file.parent)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("natural_bicolour")
+    window.view_model.create_adjustment("shadows")
+    assert window.panel_heading.text() == "Adjustment: Shadows"
+
+    window.view_model.remove_selected_adjustment()
+
+    assert window.adjustments_list.count() == 1
+    assert window.adjustments_list.item(0).text() == "✓ Natural Bi-colour • Nebula"
+    assert window.panel_heading.text() == "Adjustment: Natural Bi-colour"
+    summary = window.view_model.selected_adjustment_summary()
+    assert summary is not None
+    assert summary.type_label == "Natural Bi-colour"
+
+
 def test_right_inspector_uses_scrollable_adjustment_and_dark_dust_sections(
     qtbot: Any,
     tmp_path: Path,

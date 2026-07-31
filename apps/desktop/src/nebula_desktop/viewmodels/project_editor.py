@@ -1155,6 +1155,7 @@ class ProjectEditorViewModel(QObject):
     def create_adjustment(self, kind: AdjustmentKind) -> None:
         if self._working_documents is None:
             return
+        self._cancel_adjustment_interaction()
         colour_point_id = self._default_colour_point_id(kind)
         if _default_colour_point_tokens(kind):
             colour_point_id = self._create_image_average_colour_point(kind) or colour_point_id
@@ -1184,6 +1185,7 @@ class ProjectEditorViewModel(QObject):
     ) -> str | None:
         if self._working_documents is None:
             return None
+        self._cancel_adjustment_interaction()
         colour_point_id: str | None = None
         if _default_colour_point_tokens(kind):
             colour_point_id = self._create_sampled_colour_point(kind, sample.rgb)
@@ -1216,6 +1218,7 @@ class ProjectEditorViewModel(QObject):
     def duplicate_selected_adjustment(self) -> None:
         if self._working_documents is None:
             return
+        self._cancel_adjustment_interaction()
         rule = self._selected_rule_model()
         if rule is None:
             return
@@ -1234,6 +1237,7 @@ class ProjectEditorViewModel(QObject):
     def remove_selected_adjustment(self) -> None:
         if self._working_documents is None or self._selected_adjustment_id is None:
             return
+        self._cancel_adjustment_interaction()
         rules = self._working_documents.bundle.project.rules
         next_rules = [rule for rule in rules if rule.id != self._selected_adjustment_id]
         if len(next_rules) == len(rules):
@@ -1247,6 +1251,7 @@ class ProjectEditorViewModel(QObject):
     def move_selected_adjustment(self, direction: Literal["earlier", "later"]) -> None:
         if self._working_documents is None or self._selected_adjustment_id is None:
             return
+        self._cancel_adjustment_interaction()
         index = self._selected_adjustment_index()
         if index is None:
             return
@@ -1277,6 +1282,10 @@ class ProjectEditorViewModel(QObject):
             self.regionsChanged.emit()
             self.changesChanged.emit()
             self.previewChanged.emit()
+
+    def _cancel_adjustment_interaction(self) -> None:
+        self._is_adjustment_interacting = False
+        self._pending_interaction_refresh = False
 
     def set_selected_adjustment_primary_value(self, value: float, *, render: bool = True) -> None:
         rule = self._selected_rule_model()

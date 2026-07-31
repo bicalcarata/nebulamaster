@@ -19,18 +19,16 @@ source image is never modified.
 - Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
 - Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
-## What’s New In 0.5.1
+## What’s New In 0.5.2
 
-- `Dark Nebula Processing` is now a first-class ordered adjustment that targets `Dark Dust`.
-- Faux palette adjustments now expose per-colour balance controls so palettes can be tuned instead of only mixed wet/dry.
-- Preview rendering for heavy dark-dust work now runs against preview-sized working images, which keeps interactive edits far more responsive on large telescope images.
-- Regions remain part of the normal declarative adjustment flow and can be drawn, named, reused and applied to existing adjustments.
-- Star overlays, nebula overlays and dark-dust overlays continue to use the same semantic masks that drive the actual renderer.
-- Print export is now documented more clearly as a shared-renderer workflow with physical dimensions, DPI and preserve-pixels upscaling.
-- Recently opened projects now persist across sessions through the `File` menu instead of only during the current launch.
-- Opening another project, creating a new project, or closing the app now prompts to save, discard, or cancel if there are unsaved semantic changes.
-- Preview state is now clearer while working, with explicit `Queued`, `Rendering`, `Ready`, `Cancelled`, and `Failed` feedback instead of a mostly static footer.
-- Empty projects now guide the user directly towards `File/Open Project` or `File/New Project from Image`.
+`0.5.2` is a stability and workflow release that tightens the ordered-adjustment editor after the
+larger `0.5.x` feature work.
+
+- Adjustment-stack editing is now more reliable when adding, deleting, duplicating or reordering adjustments, so the left-hand list and the right-hand inspector stay in sync.
+- Colour-reduction behaviour is now safer for targeted colour adjustments, which avoids aggressive channel flips when reducing selected red-family tones.
+- New-project and existing-project adjustment editing now behave more predictably when the user is building up a stack from scratch.
+- Faux palettes, dark-dust work, regions, exports and semantic overlays continue to run through the same shared renderer and declarative project model introduced in `0.5.1`.
+- The desktop workflow remains centred on ordered non-destructive adjustments, project reopening, semantic targeting, and screen/print export from the same render engine.
 
 ## Why Nebula Master?
 
@@ -89,14 +87,14 @@ That means you can do things like:
 - push a colour treatment into one visible cloud
 - soften or brighten only the selected area of a target
 
-## The 0.5.1 Desktop Workflow
+## The 0.5.2 Desktop Workflow
 
 ### Ordered adjustments and palette tuning
 
 The main desktop view keeps the project, adjustment stack, preview, semantic toolbar and
 inspector visible at the same time.
 
-Faux palette adjustments behave like any other adjustment in the ordered chain. In 0.5.1 they
+Faux palette adjustments behave like any other adjustment in the ordered chain. In `0.5.x` they
 also expose palette-specific colour-balance controls in the inspector.
 
 ![Desktop with Faux Hubble colour balance](docs/images/readme/desktop-main-0-5-0.png)
@@ -362,9 +360,9 @@ The repository includes GitHub Actions for:
 
 For a normal versioned release:
 
-1. Bump the repo version, for example to `0.5.1`.
+1. Bump the repo version, for example to `0.5.2`.
 2. Push the commit to GitHub.
-3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.1`.
+3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.2`.
 4. Let `Package Desktop` build the macOS and Windows artifacts for that tag.
 5. Publish the immutable release once the artifacts are attached.
 

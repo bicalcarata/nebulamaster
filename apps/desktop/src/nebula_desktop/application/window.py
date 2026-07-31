@@ -1619,7 +1619,13 @@ class MainWindow(QMainWindow):
                 selected_row = index
         if selected_row >= 0:
             self.adjustments_list.setCurrentRow(selected_row)
-        self._apply_adjustment_summary(self.view_model.selected_adjustment_summary())
+        summary = self.view_model.selected_adjustment_summary()
+        self._apply_adjustment_summary(summary)
+        if self.view_model.selection_kind == "adjustment":
+            if summary is None:
+                self.panel_heading.setText("Select an adjustment to edit its settings.")
+            else:
+                self.panel_heading.setText(f"Adjustment: {summary.name}")
         self._refresh_dark_dust_settings()
 
     def _adjustment_list_label(self, prefix: str, summary: AdjustmentSummary) -> str:
