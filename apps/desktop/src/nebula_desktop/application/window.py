@@ -1608,24 +1608,24 @@ class MainWindow(QMainWindow):
         _ = blocker
         self.adjustments_list.clear()
         selected_row = -1
-        for index, summary in enumerate(summaries):
-            prefix = "✓" if summary.enabled else "○"
-            item = QListWidgetItem(self._adjustment_list_label(prefix, summary))
-            item.setData(Qt.ItemDataRole.UserRole, summary.rule_id)
-            if not summary.editable:
+        for index, item_summary in enumerate(summaries):
+            prefix = "✓" if item_summary.enabled else "○"
+            item = QListWidgetItem(self._adjustment_list_label(prefix, item_summary))
+            item.setData(Qt.ItemDataRole.UserRole, item_summary.rule_id)
+            if not item_summary.editable:
                 item.setForeground(QColor("#94a3b8"))
             self.adjustments_list.addItem(item)
-            if summary.rule_id == self.view_model.selected_adjustment_id:
+            if item_summary.rule_id == self.view_model.selected_adjustment_id:
                 selected_row = index
         if selected_row >= 0:
             self.adjustments_list.setCurrentRow(selected_row)
-        summary = self.view_model.selected_adjustment_summary()
-        self._apply_adjustment_summary(summary)
+        selected_summary = self.view_model.selected_adjustment_summary()
+        self._apply_adjustment_summary(selected_summary)
         if self.view_model.selection_kind == "adjustment":
-            if summary is None:
+            if selected_summary is None:
                 self.panel_heading.setText("Select an adjustment to edit its settings.")
             else:
-                self.panel_heading.setText(f"Adjustment: {summary.name}")
+                self.panel_heading.setText(f"Adjustment: {selected_summary.name}")
         self._refresh_dark_dust_settings()
 
     def _adjustment_list_label(self, prefix: str, summary: AdjustmentSummary) -> str:
