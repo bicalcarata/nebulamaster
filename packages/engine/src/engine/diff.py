@@ -11,12 +11,14 @@ from project_model import (
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    ColourTemperatureTransform,
     DarkNebulaProcessingTransform,
     DeclarativeRule,
     DiffExplanationEntry,
     DiffProjectIdentity,
     FauxPaletteTransform,
     LevelsTransform,
+    LocalContrastTransform,
     PluginLockEntry,
     ProjectBundle,
     ProjectDiffChange,
@@ -27,6 +29,8 @@ from project_model import (
     SaturationTransform,
     ShiftColourPointTransform,
     SourceImage,
+    ToneShapingTransform,
+    VibranceTransform,
 )
 
 from .validation import ValidationReport, load_valid_project_bundle
@@ -212,6 +216,62 @@ def _describe_colour_movement(
 
 def _percentage_amount(value: float) -> str:
     return f"{round((value - 1.0) * 100)}%"
+
+
+def _colour_amount_transform_summary(
+    name: str,
+    old_transform: ColourAmountTransform,
+    new_transform: ColourAmountTransform,
+) -> str:
+    family_label = new_transform.channel.replace("_", " ").title()
+    if old_transform.amount != new_transform.amount:
+        return (
+            f"The {name} rule was changed from "
+            f"{_percentage_amount(old_transform.amount)} to "
+            f"{_percentage_amount(new_transform.amount)}."
+        )
+    if old_transform.faint_colour_sensitivity != new_transform.faint_colour_sensitivity:
+        return (
+            f"Changed {family_label} Faint Colour Sensitivity from "
+            f"{_unit_percentage(old_transform.faint_colour_sensitivity)} to "
+            f"{_unit_percentage(new_transform.faint_colour_sensitivity)}."
+        )
+    if old_transform.faint_range != new_transform.faint_range:
+        return (
+            f"Changed {family_label} Faint Range from "
+            f"{_unit_percentage(old_transform.faint_range)} to "
+            f"{_unit_percentage(new_transform.faint_range)}."
+        )
+    if old_transform.structure_size != new_transform.structure_size:
+        return (
+            f"Changed {family_label} Structure Size from "
+            f"{old_transform.structure_size.replace('_', ' ').title()} to "
+            f"{new_transform.structure_size.replace('_', ' ').title()}."
+        )
+    if old_transform.reveal_faint_colour != new_transform.reveal_faint_colour:
+        return (
+            f"Changed Reveal Faint {family_label} from "
+            f"{_unit_percentage(old_transform.reveal_faint_colour)} to "
+            f"{_unit_percentage(new_transform.reveal_faint_colour)}."
+        )
+    if old_transform.bright_colour_protection != new_transform.bright_colour_protection:
+        return (
+            f"Changed Bright {family_label} Protection from "
+            f"{_unit_percentage(old_transform.bright_colour_protection)} to "
+            f"{_unit_percentage(new_transform.bright_colour_protection)}."
+        )
+    if old_transform.highlight_protection != new_transform.highlight_protection:
+        return (
+            f"Changed {family_label} Highlight Protection from "
+            f"{_unit_percentage(old_transform.highlight_protection)} to "
+            f"{_unit_percentage(new_transform.highlight_protection)}."
+        )
+    if old_transform.extended_range != new_transform.extended_range:
+        state = "enabled" if new_transform.extended_range else "disabled"
+        return f"{family_label} Extended Range was {state}."
+    if old_transform.response_version != new_transform.response_version:
+        return f"{family_label} colour response was updated."
+    return f"{name} colour controls changed."
 
 
 def _faux_palette_percentage(value: float) -> str:
@@ -799,10 +859,10 @@ def _compare_rules(
                 and isinstance(rule_b.transform, ColourAmountTransform)
                 and rule_a.transform.channel == rule_b.transform.channel
             ):
-                summary = (
-                    f"The {rule_b.name} rule was changed from "
-                    f"{_percentage_amount(rule_a.transform.amount)} to "
-                    f"{_percentage_amount(rule_b.transform.amount)}."
+                summary = _colour_amount_transform_summary(
+                    rule_b.name or rule_b.id,
+                    rule_a.transform,
+                    rule_b.transform,
                 )
             elif isinstance(rule_a.transform, ShiftColourPointTransform) and isinstance(
                 rule_b.transform, ShiftColourPointTransform
@@ -826,6 +886,157 @@ def _compare_rules(
                 rule_b.transform, LevelsTransform
             ):
                 summary = f"{rule_b.name} levels changed."
+            elif isinstance(rule_a.transform, ToneShapingTransform) and isinstance(
+                rule_b.transform, ToneShapingTransform
+            ):
+                if rule_a.transform.shadows != rule_b.transform.shadows:
+                    summary = (
+                        f"Changed Tone Shaping Shadows from "
+                        f"{_unit_percentage(rule_a.transform.shadows)} to "
+                        f"{_unit_percentage(rule_b.transform.shadows)}."
+                    )
+                elif rule_a.transform.midtones != rule_b.transform.midtones:
+                    summary = (
+                        f"Changed Tone Shaping Midtones from "
+                        f"{_unit_percentage(rule_a.transform.midtones)} to "
+                        f"{_unit_percentage(rule_b.transform.midtones)}."
+                    )
+                elif rule_a.transform.highlights != rule_b.transform.highlights:
+                    summary = (
+                        f"Changed Tone Shaping Highlights from "
+                        f"{_unit_percentage(rule_a.transform.highlights)} to "
+                        f"{_unit_percentage(rule_b.transform.highlights)}."
+                    )
+                elif rule_a.transform.contrast != rule_b.transform.contrast:
+                    summary = (
+                        f"Changed Tone Shaping Contrast from "
+                        f"{_unit_percentage(rule_a.transform.contrast)} to "
+                        f"{_unit_percentage(rule_b.transform.contrast)}."
+                    )
+                elif (
+                    rule_a.transform.black_protection
+                    != rule_b.transform.black_protection
+                ):
+                    summary = (
+                        f"Changed Tone Shaping Black Protection from "
+                        f"{_unit_percentage(rule_a.transform.black_protection)} to "
+                        f"{_unit_percentage(rule_b.transform.black_protection)}."
+                    )
+                elif (
+                    rule_a.transform.highlight_protection
+                    != rule_b.transform.highlight_protection
+                ):
+                    summary = (
+                        f"Changed Tone Shaping Highlight Protection from "
+                        f"{_unit_percentage(rule_a.transform.highlight_protection)} to "
+                        f"{_unit_percentage(rule_b.transform.highlight_protection)}."
+                    )
+                else:
+                    summary = "Tone Shaping changed."
+            elif isinstance(rule_a.transform, LocalContrastTransform) and isinstance(
+                rule_b.transform, LocalContrastTransform
+            ):
+                if rule_a.transform.amount != rule_b.transform.amount:
+                    summary = (
+                        f"Changed Local Contrast Amount from "
+                        f"{_unit_percentage(rule_a.transform.amount)} to "
+                        f"{_unit_percentage(rule_b.transform.amount)}."
+                    )
+                elif rule_a.transform.structure_size != rule_b.transform.structure_size:
+                    summary = (
+                        f"Changed Local Contrast Structure Size from "
+                        f"{rule_a.transform.structure_size.replace('_', ' ').title()} to "
+                        f"{rule_b.transform.structure_size.replace('_', ' ').title()}."
+                    )
+                elif (
+                    rule_a.transform.background_protection
+                    != rule_b.transform.background_protection
+                ):
+                    summary = (
+                        f"Changed Local Contrast Background Protection from "
+                        f"{_unit_percentage(rule_a.transform.background_protection)} to "
+                        f"{_unit_percentage(rule_b.transform.background_protection)}."
+                    )
+                elif (
+                    rule_a.transform.highlight_protection
+                    != rule_b.transform.highlight_protection
+                ):
+                    summary = (
+                        f"Changed Local Contrast Highlight Protection from "
+                        f"{_unit_percentage(rule_a.transform.highlight_protection)} to "
+                        f"{_unit_percentage(rule_b.transform.highlight_protection)}."
+                    )
+                elif rule_a.transform.softness != rule_b.transform.softness:
+                    summary = (
+                        f"Changed Local Contrast Softness from "
+                        f"{_unit_percentage(rule_a.transform.softness)} to "
+                        f"{_unit_percentage(rule_b.transform.softness)}."
+                    )
+                else:
+                    summary = "Local Contrast changed."
+            elif isinstance(rule_a.transform, VibranceTransform) and isinstance(
+                rule_b.transform, VibranceTransform
+            ):
+                if rule_a.transform.amount != rule_b.transform.amount:
+                    summary = (
+                        f"Changed Vibrance Amount from "
+                        f"{_unit_percentage(rule_a.transform.amount)} to "
+                        f"{_unit_percentage(rule_b.transform.amount)}."
+                    )
+                elif (
+                    rule_a.transform.protect_strong_colours
+                    != rule_b.transform.protect_strong_colours
+                ):
+                    summary = (
+                        f"Changed Protect Strong Colours from "
+                        f"{_unit_percentage(rule_a.transform.protect_strong_colours)} to "
+                        f"{_unit_percentage(rule_b.transform.protect_strong_colours)}."
+                    )
+                elif (
+                    rule_a.transform.protect_bright_areas
+                    != rule_b.transform.protect_bright_areas
+                ):
+                    summary = (
+                        f"Changed Protect Bright Areas from "
+                        f"{_unit_percentage(rule_a.transform.protect_bright_areas)} to "
+                        f"{_unit_percentage(rule_b.transform.protect_bright_areas)}."
+                    )
+                else:
+                    summary = "Vibrance changed."
+            elif isinstance(rule_a.transform, ColourTemperatureTransform) and isinstance(
+                rule_b.transform, ColourTemperatureTransform
+            ):
+                if rule_a.transform.warmth != rule_b.transform.warmth:
+                    summary = (
+                        f"Changed Warmth from "
+                        f"{_unit_percentage(rule_a.transform.warmth)} to "
+                        f"{_unit_percentage(rule_b.transform.warmth)}."
+                    )
+                elif rule_a.transform.tint != rule_b.transform.tint:
+                    summary = (
+                        f"Changed Tint from "
+                        f"{_unit_percentage(rule_a.transform.tint)} to "
+                        f"{_unit_percentage(rule_b.transform.tint)}."
+                    )
+                elif (
+                    rule_a.transform.preserve_brightness
+                    != rule_b.transform.preserve_brightness
+                ):
+                    state = (
+                        "enabled" if rule_b.transform.preserve_brightness else "disabled"
+                    )
+                    summary = f"Preserve Brightness was {state}."
+                elif (
+                    rule_a.transform.protect_neutral_background
+                    != rule_b.transform.protect_neutral_background
+                ):
+                    summary = (
+                        f"Changed Protect Neutral Background from "
+                        f"{_unit_percentage(rule_a.transform.protect_neutral_background)} to "
+                        f"{_unit_percentage(rule_b.transform.protect_neutral_background)}."
+                    )
+                else:
+                    summary = "Colour Temperature changed."
             elif isinstance(rule_a.transform, FauxPaletteTransform) and isinstance(
                 rule_b.transform, FauxPaletteTransform
             ):

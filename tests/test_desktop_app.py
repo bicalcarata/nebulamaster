@@ -36,6 +36,7 @@ from project_model import (
     ColourAmountTransform,
     FauxPaletteTransform,
     LevelsTransform,
+    LocalContrastTransform,
     SaturationTransform,
     ShiftColourPointTransform,
 )
@@ -212,6 +213,10 @@ def test_add_adjustment_menu_labels_are_clean_and_sorted() -> None:
     assert labels == sorted(labels, key=str.lower)
     assert all(not label.startswith("Add ") for label in labels)
     assert all(" adjustment" not in label.lower() for label in labels)
+    assert "Tone Shaping" in labels
+    assert "Local Contrast" in labels
+    assert "Vibrance" in labels
+    assert "Colour Temperature" in labels
 
 
 def test_open_project_dialog_accepts_project_yaml(
@@ -1349,6 +1354,124 @@ def test_dark_nebula_processing_adjustment_defaults_and_controls(
     assert window.extra_adjustment_controls_layout.count() == 10
 
 
+def test_new_adjustment_summaries_expose_expected_controls(tmp_path: Path) -> None:
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(_copy_example_project(tmp_path)) is True
+
+    view_model.create_adjustment("tone_shaping")
+    tone_summary = view_model.selected_adjustment_summary()
+    assert tone_summary is not None
+    assert tone_summary.type_label == "Tone Shaping"
+    assert tone_summary.primary_value is None
+    assert [control.label for control in tone_summary.extra_numeric_controls] == [
+        "Shadows",
+        "Midtones",
+        "Highlights",
+        "Contrast",
+        "Black Protection",
+        "Highlight Protection",
+    ]
+
+    view_model.create_adjustment("local_contrast")
+    contrast_summary = view_model.selected_adjustment_summary()
+    assert contrast_summary is not None
+    assert contrast_summary.type_label == "Local Contrast"
+    assert contrast_summary.primary_label == "Amount"
+    assert contrast_summary.choice_controls[0].label == "Structure Size"
+    assert contrast_summary.choice_controls[0].value == "broad"
+
+    view_model.create_adjustment("vibrance")
+    vibrance_summary = view_model.selected_adjustment_summary()
+    assert vibrance_summary is not None
+    assert vibrance_summary.type_label == "Vibrance"
+    assert [control.label for control in vibrance_summary.extra_numeric_controls] == [
+        "Protect Strong Colours",
+        "Protect Bright Areas",
+    ]
+
+    view_model.create_adjustment("colour_temperature")
+    temperature_summary = view_model.selected_adjustment_summary()
+    assert temperature_summary is not None
+    assert temperature_summary.type_label == "Colour Temperature"
+    assert temperature_summary.primary_label == "Warmth"
+    assert temperature_summary.option_label == "Preserve Brightness"
+    assert [control.label for control in temperature_summary.extra_numeric_controls] == [
+        "Tint",
+        "Protect Neutral Background",
+    ]
+
+
+def test_local_contrast_choice_control_updates_structure_size(tmp_path: Path) -> None:
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(_copy_example_project(tmp_path)) is True
+
+    view_model.create_adjustment("local_contrast")
+    view_model.set_selected_adjustment_choice_control("structure_size", "very_broad", render=False)
+
+    rule = view_model._selected_rule_model()
+    assert rule is not None
+    assert isinstance(rule.transform, LocalContrastTransform)
+    assert rule.transform.structure_size == "very_broad"
+
+
+def test_desktop_export_matches_direct_renderer_for_tone_shaping(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "tone-shaping",
+            "name": "Tone Shaping",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "tone_shaping",
+                "shadows": 0.20,
+                "midtones": 0.35,
+                "highlights": -0.10,
+                "contrast": 0.25,
+                "black_protection": 0.75,
+                "highlight_protection": 0.80,
+            },
+        }
+    )
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+    native = view_model.native_render_dimensions()
+    assert native is not None
+    profile = view_model.build_screen_export_profile(
+        output_format="png",
+        width_px=native[0],
+        interpolation="nearest",
+    )
+    desktop_path = tmp_path / "desktop-tone-shaping.png"
+    direct_path = tmp_path / "direct-tone-shaping.png"
+    view_model.export_render(
+        output_path=desktop_path,
+        profile_id="screen-export",
+        profile=profile,
+        force=True,
+    )
+    assert view_model._working_documents is not None
+    render_bundle_output(
+        view_model._working_documents.bundle.model_copy(deep=True),
+        profile_id="screen-export",
+        profile=profile,
+        output_path=direct_path,
+        force=True,
+    )
+
+    desktop_image = load_canonical_image(desktop_path).data
+    direct_image = load_canonical_image(direct_path).data
+    assert np.allclose(desktop_image, direct_image)
+
+
 def test_desktop_export_matches_direct_renderer_for_dark_nebula_processing(tmp_path: Path) -> None:
     project_dir = _copy_example_project(tmp_path)
     project_path = project_dir / "project.yaml"
@@ -2293,6 +2416,14 @@ def test_new_blue_and_red_adjustments_create_image_derived_colour_points(tmp_pat
     assert blue_rule.target == "combined"
     assert isinstance(blue_rule.transform, ColourAmountTransform)
     assert blue_rule.transform.amount == 1.0
+    assert blue_rule.transform.response_version == "enhanced"
+    assert blue_rule.transform.faint_colour_sensitivity == 0.20
+    assert blue_rule.transform.reveal_faint_colour == 0.0
+    assert blue_rule.transform.faint_range == 0.55
+    assert blue_rule.transform.structure_size == "broad"
+    assert blue_rule.transform.bright_colour_protection == 0.75
+    assert blue_rule.transform.highlight_protection == 0.65
+    assert blue_rule.transform.extended_range is False
 
     view_model.create_adjustment("red")
     red_rule = view_model._selected_rule_model()
@@ -2302,6 +2433,14 @@ def test_new_blue_and_red_adjustments_create_image_derived_colour_points(tmp_pat
     assert red_rule.target == "combined"
     assert isinstance(red_rule.transform, ColourAmountTransform)
     assert red_rule.transform.amount == 1.0
+    assert red_rule.transform.response_version == "enhanced"
+    assert red_rule.transform.faint_colour_sensitivity == 0.30
+    assert red_rule.transform.reveal_faint_colour == 0.0
+    assert red_rule.transform.faint_range == 0.60
+    assert red_rule.transform.structure_size == "broad"
+    assert red_rule.transform.bright_colour_protection == 0.75
+    assert red_rule.transform.highlight_protection == 0.65
+    assert red_rule.transform.extended_range is False
 
 
 def test_new_green_cyan_and_yellow_adjustments_create_image_derived_points(tmp_path: Path) -> None:
@@ -2317,6 +2456,13 @@ def test_new_green_cyan_and_yellow_adjustments_create_image_derived_points(tmp_p
     assert isinstance(green_rule.transform, ColourAmountTransform)
     assert green_rule.transform.channel == "green"
     assert green_rule.transform.amount == 1.0
+    assert green_rule.transform.response_version == "enhanced"
+    assert green_rule.transform.faint_colour_sensitivity == 0.20
+    assert green_rule.transform.faint_range == 0.55
+    assert green_rule.transform.structure_size == "broad"
+    assert green_rule.transform.bright_colour_protection == 0.75
+    assert green_rule.transform.highlight_protection == 0.65
+    assert green_rule.transform.extended_range is False
 
     view_model.create_adjustment("cyan")
     cyan_rule = view_model._selected_rule_model()
@@ -2335,6 +2481,73 @@ def test_new_green_cyan_and_yellow_adjustments_create_image_derived_points(tmp_p
     assert isinstance(yellow_rule.transform, ShiftColourPointTransform)
     assert yellow_rule.transform.target_colour_point == "nebula-yellow"
     assert yellow_rule.transform.amount == 0.0
+
+
+def test_colour_strength_adjustment_summary_exposes_enhanced_controls(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    view_model.create_adjustment("red")
+    summary = view_model.selected_adjustment_summary()
+
+    assert summary is not None
+    assert summary.type_label == "Red"
+    assert summary.transform_type == "colour_amount"
+    assert summary.primary_label == "Colour Strength"
+    assert summary.primary_value == 1.0
+    assert summary.option_label == "Extended Range"
+    assert summary.option_enabled is False
+    assert [control.label for control in summary.choice_controls] == ["Structure Size"]
+    assert [control.label for control in summary.extra_numeric_controls] == [
+        "Colour Range",
+        "Faint Colour Sensitivity",
+        "Faint Range",
+        "Reveal Faint Red",
+        "Bright Red Protection",
+        "Highlight Protection",
+    ]
+
+    view_model.set_selected_adjustment_extra_numeric_control("colour_range", 32.0, render=False)
+    view_model.set_selected_adjustment_extra_numeric_control(
+        "faint_colour_sensitivity",
+        55.0,
+        render=False,
+    )
+    view_model.set_selected_adjustment_extra_numeric_control(
+        "faint_range",
+        68.0,
+        render=False,
+    )
+    view_model.set_selected_adjustment_extra_numeric_control(
+        "reveal_faint_colour",
+        25.0,
+        render=False,
+    )
+    view_model.set_selected_adjustment_extra_numeric_control(
+        "bright_colour_protection",
+        74.0,
+        render=False,
+    )
+    view_model.set_selected_adjustment_extra_numeric_control(
+        "highlight_protection",
+        80.0,
+        render=False,
+    )
+    view_model.set_selected_adjustment_choice_control("structure_size", "very_broad", render=False)
+    view_model.set_selected_adjustment_option_enabled(True)
+
+    rule = view_model._selected_rule_model()
+    assert rule is not None
+    assert isinstance(rule.transform, ColourAmountTransform)
+    assert abs(rule.match.colour_range - 0.32) < 1e-6
+    assert abs(rule.transform.faint_colour_sensitivity - 0.55) < 1e-6
+    assert abs(rule.transform.faint_range - 0.68) < 1e-6
+    assert abs(rule.transform.reveal_faint_colour - 0.25) < 1e-6
+    assert abs(rule.transform.bright_colour_protection - 0.74) < 1e-6
+    assert abs(rule.transform.highlight_protection - 0.80) < 1e-6
+    assert rule.transform.structure_size == "very_broad"
+    assert rule.transform.extended_range is True
 
 
 def test_new_colour_adjustment_uses_current_image_average_for_family(tmp_path: Path) -> None:

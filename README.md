@@ -154,7 +154,11 @@ The desktop app now does more of the small things users expect from a real edito
 - Shadows
 - Brightness
 - Levels
+- Tone Shaping
+- Local Contrast
 - Saturation
+- Vibrance
+- Colour Temperature
 - Blue
 - Red
 - Green
@@ -191,6 +195,23 @@ adjustment.
 
 It is designed to reveal faint translucent dark-nebula structure while preserving the depth of the
 denser obscuring regions already present in the image.
+
+## New Finishing Controls In This Slice
+
+Nebula Master now includes four additional ordered declarative adjustments that sit in the same
+stack as the existing tools:
+
+- `Tone Shaping` for separate shadow, midtone, highlight and contrast control without exposing a curve graph
+- `Local Contrast` for broad structural separation that is gentler than conventional sharpening
+- `Vibrance` for lifting weaker existing colour more than already strong colour
+- `Colour Temperature` for simple Warmth and Tint correction with brightness protection
+
+These adjustments:
+
+- run through the same shared renderer used by preview, CLI rendering, screen export and print export
+- can target `Combined Image`, `Nebula`, `Stars` or `Dark Dust`
+- can be limited to regions
+- remain reorderable, duplicable, resettable and removable like the rest of the stack
 
 ## A Simple First Workflow
 

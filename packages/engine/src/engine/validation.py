@@ -18,9 +18,11 @@ from project_model import (
     ChannelContributionSourceMix,
     ColourAmountTransform,
     ColourSmoothingTransform,
+    ColourTemperatureTransform,
     DarkNebulaProcessingTransform,
     FauxPaletteTransform,
     LevelsTransform,
+    LocalContrastTransform,
     ManualAlignment,
     PaletteFile,
     PluginLockFile,
@@ -29,6 +31,8 @@ from project_model import (
     RenderProfileFile,
     SaturationTransform,
     ShiftColourPointTransform,
+    ToneShapingTransform,
+    VibranceTransform,
 )
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -217,6 +221,10 @@ def _validate_project_cross_references(bundle: ProjectBundle) -> list[Validation
                 BrightnessTransform,
                 SaturationTransform,
                 LevelsTransform,
+                ToneShapingTransform,
+                LocalContrastTransform,
+                VibranceTransform,
+                ColourTemperatureTransform,
                 ColourSmoothingTransform,
                 FauxPaletteTransform,
                 DarkNebulaProcessingTransform,

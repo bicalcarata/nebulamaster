@@ -39,6 +39,7 @@ from project_model import (
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    ColourTemperatureTransform,
     DarkDustSettings,
     DarkNebulaProcessingTransform,
     DeclarativeRule,
@@ -46,6 +47,8 @@ from project_model import (
     Feather,
     FileReference,
     LevelsTransform,
+    LocalContrastStructureSize,
+    LocalContrastTransform,
     PrintRenderProfile,
     PrintUnits,
     ProjectBundle,
@@ -61,6 +64,8 @@ from project_model import (
     SemanticTarget,
     ShiftColourPointTransform,
     SourceImage,
+    ToneShapingTransform,
+    VibranceTransform,
 )
 from project_model.models import ColourValue
 from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
@@ -79,6 +84,10 @@ AdjustmentKind = Literal[
     "levels",
     "saturation",
     "smoothness",
+    "tone_shaping",
+    "local_contrast",
+    "vibrance",
+    "colour_temperature",
     "faux_hubble",
     "faux_hoo",
     "foraxx",
@@ -158,6 +167,20 @@ class ExtraNumericControlSummary:
     key: str
     label: str
     value: float
+    minimum: float
+    maximum: float
+    step: float
+    decimals: int
+    suffix: str
+    helper_text: str
+
+
+@dataclass(frozen=True)
+class ChoiceControlSummary:
+    key: str
+    label: str
+    value: str
+    options: tuple[tuple[str, str], ...]
     helper_text: str
 
 
@@ -189,6 +212,9 @@ class AdjustmentSummary:
     region_ids: list[str]
     palette_balance_controls: tuple[PaletteBalanceControlSummary, ...]
     extra_numeric_controls: tuple[ExtraNumericControlSummary, ...]
+    choice_controls: tuple[ChoiceControlSummary, ...]
+    extra_controls_title: str | None
+    extra_controls_helper: str | None
 
     @property
     def amount(self) -> float:
@@ -265,6 +291,14 @@ def _type_label(rule: DeclarativeRule) -> str:
         return "Brightness"
     if isinstance(transform, LevelsTransform):
         return "Levels"
+    if isinstance(transform, ToneShapingTransform):
+        return "Tone Shaping"
+    if isinstance(transform, LocalContrastTransform):
+        return "Local Contrast"
+    if isinstance(transform, VibranceTransform):
+        return "Vibrance"
+    if isinstance(transform, ColourTemperatureTransform):
+        return "Colour Temperature"
     if isinstance(transform, SaturationTransform):
         return "Saturation"
     if isinstance(transform, ColourSmoothingTransform):
@@ -289,8 +323,8 @@ def _helper_text(rule: DeclarativeRule) -> str:
         return "Lifts or deepens darker detail above black without moving the whole image equally."
     if isinstance(transform, ColourAmountTransform):
         return (
-            f"Controls how strongly the selected {transform.channel} glow appears "
-            "in the final image."
+            f"Strengthens the selected {transform.channel} glow while keeping Reveal Faint "
+            f"{transform.channel.capitalize()} focused on dim, muted {transform.channel} structure."
         )
     if isinstance(transform, ShiftColourPointTransform):
         target = _label_from_colour_point_id(transform.target_colour_point).lower()
@@ -301,6 +335,27 @@ def _helper_text(rule: DeclarativeRule) -> str:
         return (
             "Adjusts five tonal bands from the darkest parts of the image "
             "to the brightest highlights."
+        )
+    if isinstance(transform, ToneShapingTransform):
+        return (
+            "Shapes the dark, middle and bright parts of the image independently. "
+            "Use it to reveal faint structure while keeping the background and "
+            "highlights under control."
+        )
+    if isinstance(transform, LocalContrastTransform):
+        return (
+            "Separates nearby structures to make faint clouds and dust easier to see. "
+            "Structure Size controls whether the effect follows smaller or broader features."
+        )
+    if isinstance(transform, VibranceTransform):
+        return (
+            "Strengthens subtle colour while protecting colours that are already strong. "
+            "It only works with colour already present in the image."
+        )
+    if isinstance(transform, ColourTemperatureTransform):
+        return (
+            "Adjusts the overall colour character. Warmth moves between cool blue and "
+            "warm amber; Tint moves between green and magenta."
         )
     if isinstance(transform, SaturationTransform):
         return "Controls how vivid the selected colours appear in the final image."
@@ -408,6 +463,10 @@ def _default_colour_point_tokens(kind: AdjustmentKind) -> tuple[str, ...]:
         "levels": (),
         "saturation": (),
         "smoothness": (),
+        "tone_shaping": (),
+        "local_contrast": (),
+        "vibrance": (),
+        "colour_temperature": (),
         "faux_hubble": (),
         "faux_hoo": (),
         "foraxx": (),
@@ -450,6 +509,121 @@ def _dark_nebula_control_helper_text(key: str) -> str:
         "dust_colour": "Strengthens colour already present in the dust.",
         "softness": "Softens the transition of the dark-nebula treatment.",
     }[key]
+
+
+def _tone_shaping_control_helper_text(key: str) -> str:
+    return {
+        "shadows": (
+            "Deepens or lifts recoverable dark structure without moving clipped black equally."
+        ),
+        "midtones": "Raises or lowers the main middle tones where faint nebulosity often lives.",
+        "highlights": (
+            "Restrains or strengthens brighter structures without immediately clipping them."
+        ),
+        "contrast": "Increases or reduces tonal separation around the middle of the image.",
+        "black_protection": "Protects the darkest background from being lifted too far.",
+        "highlight_protection": "Protects bright structure from pushing too hard towards white.",
+    }[key]
+
+
+def _local_contrast_control_helper_text(key: str) -> str:
+    return {
+        "structure_size": "Controls whether the effect follows smaller or broader structures.",
+        "background_protection": (
+            "Prevents flat dark background and noise from being pushed too hard."
+        ),
+        "highlight_protection": "Keeps bright structures from developing harsh edges.",
+        "softness": "Controls how gently the local contrast blends across nearby structures.",
+    }[key]
+
+
+def _vibrance_control_helper_text(key: str) -> str:
+    return {
+        "protect_strong_colours": "Reduces changes to colours that are already strong.",
+        "protect_bright_areas": "Helps bright regions avoid unnatural colour build-up.",
+    }[key]
+
+
+def _colour_temperature_control_helper_text(key: str) -> str:
+    return {
+        "tint": "Moves the affected image area between green and magenta.",
+        "protect_neutral_background": "Reduces colour shifts in very dark neutral background.",
+    }[key]
+
+
+def _colour_amount_control_helper_text(key: str, family_label: str) -> str:
+    if key == "colour_range":
+        return f"Controls how closely colours must match the selected {family_label.lower()} point."
+    if key == "faint_colour_sensitivity":
+        return (
+            f"Controls how readily muted, low-saturation {family_label.lower()} structure is "
+            "considered for Reveal Faint processing."
+        )
+    if key == "faint_range":
+        return (
+            f"Controls how deep into the shadows and lower midtones Reveal Faint "
+            f"{family_label.capitalize()} will reach."
+        )
+    if key == "bright_colour_protection":
+        return (
+            f"Reduces the effect on bright {family_label.lower()} emission so the adjustment can "
+            "concentrate on fainter structure."
+        )
+    if key == "reveal_faint_colour":
+        return (
+            f"Lifts dim, low-saturation {family_label.lower()} structure while protecting "
+            f"{family_label.lower()} material that is already bright."
+        )
+    if key == "highlight_protection":
+        return "Protects brighter structure from pushing too hard towards clipping."
+    raise KeyError(key)
+
+
+def _signed_percent_control(
+    key: str,
+    label: str,
+    value: float,
+    helper_text: str,
+) -> ExtraNumericControlSummary:
+    return ExtraNumericControlSummary(
+        key=key,
+        label=label,
+        value=value * 100.0,
+        minimum=-100.0,
+        maximum=100.0,
+        step=1.0,
+        decimals=0,
+        suffix="%",
+        helper_text=helper_text,
+    )
+
+
+def _percent_control(
+    key: str,
+    label: str,
+    value: float,
+    helper_text: str,
+) -> ExtraNumericControlSummary:
+    return ExtraNumericControlSummary(
+        key=key,
+        label=label,
+        value=value * 100.0,
+        minimum=0.0,
+        maximum=100.0,
+        step=1.0,
+        decimals=0,
+        suffix="%",
+        helper_text=helper_text,
+    )
+
+
+def _local_contrast_structure_options() -> tuple[tuple[str, str], ...]:
+    return (
+        ("fine", "Fine"),
+        ("medium", "Medium"),
+        ("broad", "Broad"),
+        ("very_broad", "Very Broad"),
+    )
 
 
 def _target_label(target_id: str) -> str:
@@ -797,13 +971,88 @@ class ProjectEditorViewModel(QObject):
             option_enabled: bool | None = None
             palette_balance_controls: tuple[PaletteBalanceControlSummary, ...] = ()
             extra_numeric_controls: tuple[ExtraNumericControlSummary, ...] = ()
+            choice_controls: tuple[ChoiceControlSummary, ...] = ()
+            extra_controls_title: str | None = None
+            extra_controls_helper: str | None = None
             editable = False
             transform = rule.transform
             supports_colour_point = _supports_colour_point(transform)
             if isinstance(transform, ColourAmountTransform):
                 editable = True
-                primary_label = "Amount"
+                primary_label = "Colour Strength"
                 primary_value = transform.amount
+                option_label = "Extended Range"
+                option_enabled = transform.extended_range
+                extra_controls_title = "Colour Controls"
+                extra_controls_helper = (
+                    "Keeps direct colour strength separate from the faint-structure reveal mask so "
+                    "dim coherent colour can be lifted without overdriving brighter emission."
+                )
+                choice_controls = (
+                    ChoiceControlSummary(
+                        key="structure_size",
+                        label="Structure Size",
+                        value=transform.structure_size,
+                        options=_local_contrast_structure_options(),
+                        helper_text=(
+                            "Controls whether Reveal Faint follows finer structure or broader "
+                            "coherent colour clouds."
+                        ),
+                    ),
+                )
+                extra_numeric_controls = (
+                    _percent_control(
+                        "colour_range",
+                        "Colour Range",
+                        rule.match.colour_range,
+                        _colour_amount_control_helper_text("colour_range", transform.channel),
+                    ),
+                    _percent_control(
+                        "faint_colour_sensitivity",
+                        "Faint Colour Sensitivity",
+                        transform.faint_colour_sensitivity,
+                        _colour_amount_control_helper_text(
+                            "faint_colour_sensitivity",
+                            transform.channel,
+                        ),
+                    ),
+                    _percent_control(
+                        "faint_range",
+                        "Faint Range",
+                        transform.faint_range,
+                        _colour_amount_control_helper_text(
+                            "faint_range",
+                            transform.channel,
+                        ),
+                    ),
+                    _percent_control(
+                        "reveal_faint_colour",
+                        f"Reveal Faint {transform.channel.capitalize()}",
+                        transform.reveal_faint_colour,
+                        _colour_amount_control_helper_text(
+                            "reveal_faint_colour",
+                            transform.channel,
+                        ),
+                    ),
+                    _percent_control(
+                        "bright_colour_protection",
+                        f"Bright {transform.channel.capitalize()} Protection",
+                        transform.bright_colour_protection,
+                        _colour_amount_control_helper_text(
+                            "bright_colour_protection",
+                            transform.channel,
+                        ),
+                    ),
+                    _percent_control(
+                        "highlight_protection",
+                        "Highlight Protection",
+                        transform.highlight_protection,
+                        _colour_amount_control_helper_text(
+                            "highlight_protection",
+                            transform.channel,
+                        ),
+                    ),
+                )
             elif isinstance(transform, ShiftColourPointTransform):
                 editable = True
                 primary_label = "Amount"
@@ -819,6 +1068,136 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.amount
             elif isinstance(transform, LevelsTransform):
                 editable = True
+            elif isinstance(transform, ToneShapingTransform):
+                editable = True
+                extra_controls_title = "Tone Controls"
+                extra_controls_helper = (
+                    "Fine-tunes how strongly dark, middle and bright parts of the image move."
+                )
+                extra_numeric_controls = (
+                    _signed_percent_control(
+                        "shadows",
+                        "Shadows",
+                        transform.shadows,
+                        _tone_shaping_control_helper_text("shadows"),
+                    ),
+                    _signed_percent_control(
+                        "midtones",
+                        "Midtones",
+                        transform.midtones,
+                        _tone_shaping_control_helper_text("midtones"),
+                    ),
+                    _signed_percent_control(
+                        "highlights",
+                        "Highlights",
+                        transform.highlights,
+                        _tone_shaping_control_helper_text("highlights"),
+                    ),
+                    _signed_percent_control(
+                        "contrast",
+                        "Contrast",
+                        transform.contrast,
+                        _tone_shaping_control_helper_text("contrast"),
+                    ),
+                    _percent_control(
+                        "black_protection",
+                        "Black Protection",
+                        transform.black_protection,
+                        _tone_shaping_control_helper_text("black_protection"),
+                    ),
+                    _percent_control(
+                        "highlight_protection",
+                        "Highlight Protection",
+                        transform.highlight_protection,
+                        _tone_shaping_control_helper_text("highlight_protection"),
+                    ),
+                )
+            elif isinstance(transform, LocalContrastTransform):
+                editable = True
+                primary_label = "Amount"
+                primary_value = transform.amount
+                extra_controls_title = "Local Contrast Controls"
+                extra_controls_helper = (
+                    "Controls the scale of the structure and how gently the effect protects the "
+                    "background and bright features."
+                )
+                choice_controls = (
+                    ChoiceControlSummary(
+                        key="structure_size",
+                        label="Structure Size",
+                        value=transform.structure_size,
+                        options=_local_contrast_structure_options(),
+                        helper_text=_local_contrast_control_helper_text("structure_size"),
+                    ),
+                )
+                extra_numeric_controls = (
+                    _percent_control(
+                        "background_protection",
+                        "Background Protection",
+                        transform.background_protection,
+                        _local_contrast_control_helper_text("background_protection"),
+                    ),
+                    _percent_control(
+                        "highlight_protection",
+                        "Highlight Protection",
+                        transform.highlight_protection,
+                        _local_contrast_control_helper_text("highlight_protection"),
+                    ),
+                    _percent_control(
+                        "softness",
+                        "Softness",
+                        transform.softness,
+                        _local_contrast_control_helper_text("softness"),
+                    ),
+                )
+            elif isinstance(transform, VibranceTransform):
+                editable = True
+                primary_label = "Amount"
+                primary_value = transform.amount
+                extra_controls_title = "Vibrance Controls"
+                extra_controls_helper = (
+                    "Keeps stronger colours and bright areas under control while subtle colour is "
+                    "lifted or restrained."
+                )
+                extra_numeric_controls = (
+                    _percent_control(
+                        "protect_strong_colours",
+                        "Protect Strong Colours",
+                        transform.protect_strong_colours,
+                        _vibrance_control_helper_text("protect_strong_colours"),
+                    ),
+                    _percent_control(
+                        "protect_bright_areas",
+                        "Protect Bright Areas",
+                        transform.protect_bright_areas,
+                        _vibrance_control_helper_text("protect_bright_areas"),
+                    ),
+                )
+            elif isinstance(transform, ColourTemperatureTransform):
+                editable = True
+                primary_label = "Warmth"
+                primary_value = transform.warmth
+                option_label = "Preserve Brightness"
+                option_enabled = transform.preserve_brightness
+                extra_controls_title = "Temperature Controls"
+                extra_controls_helper = (
+                    "Moves the affected image area between cooler and warmer colour, and between "
+                    "green and magenta."
+                )
+                extra_numeric_controls = (
+                    _signed_percent_control(
+                        "tint",
+                        "Tint",
+                        transform.tint,
+                        _colour_temperature_control_helper_text("tint"),
+                    ),
+                    _percent_control(
+                        "protect_neutral_background",
+                        "Protect Neutral Background",
+                        transform.protect_neutral_background,
+                        _colour_temperature_control_helper_text("protect_neutral_background"),
+                    ),
+                )
             elif isinstance(transform, SaturationTransform):
                 editable = True
                 primary_label = "Less / More"
@@ -861,12 +1240,17 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.amount
                 option_label = "Preserve Bright Areas"
                 option_enabled = transform.preserve_bright_areas
+                extra_controls_title = "Dark Nebula Controls"
+                extra_controls_helper = (
+                    "Fine-tunes how the dark-nebula treatment lifts the veil, preserves the core, "
+                    "and strengthens existing dust colour."
+                )
                 extra_numeric_controls = tuple(
-                    ExtraNumericControlSummary(
-                        key=key,
-                        label=label,
-                        value=value,
-                        helper_text=_dark_nebula_control_helper_text(key),
+                    _percent_control(
+                        key,
+                        label,
+                        value,
+                        _dark_nebula_control_helper_text(key),
                     )
                     for key, label, value in (
                         ("reveal_dust", "Reveal Dust", transform.reveal_dust),
@@ -915,6 +1299,9 @@ class ProjectEditorViewModel(QObject):
                     region_ids=list(rule.regions),
                     palette_balance_controls=palette_balance_controls,
                     extra_numeric_controls=extra_numeric_controls,
+                    choice_controls=choice_controls,
+                    extra_controls_title=extra_controls_title,
+                    extra_controls_helper=extra_controls_helper,
                 )
             )
         return summaries
@@ -1300,6 +1687,12 @@ class ProjectEditorViewModel(QObject):
             transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, LevelsTransform):
             return
+        elif isinstance(transform, LocalContrastTransform):
+            transform.amount = max(-1.0, min(1.0, value))
+        elif isinstance(transform, VibranceTransform):
+            transform.amount = max(-1.0, min(1.0, value))
+        elif isinstance(transform, ColourTemperatureTransform):
+            transform.warmth = max(-1.0, min(1.0, value))
         elif isinstance(transform, SaturationTransform):
             transform.amount = max(0.0, min(4.0, value))
         elif isinstance(transform, ColourSmoothingTransform):
@@ -1324,10 +1717,19 @@ class ProjectEditorViewModel(QObject):
         rule = self._selected_rule_model()
         if rule is None or not isinstance(
             rule.transform,
-            (FauxPaletteTransform, DarkNebulaProcessingTransform),
+            (
+                ColourAmountTransform,
+                FauxPaletteTransform,
+                DarkNebulaProcessingTransform,
+                ColourTemperatureTransform,
+            ),
         ):
             return
-        if isinstance(rule.transform, FauxPaletteTransform):
+        if isinstance(rule.transform, ColourAmountTransform):
+            rule.transform.extended_range = enabled
+        elif isinstance(rule.transform, FauxPaletteTransform):
+            rule.transform.preserve_brightness = enabled
+        elif isinstance(rule.transform, ColourTemperatureTransform):
             rule.transform.preserve_brightness = enabled
         else:
             rule.transform.preserve_bright_areas = enabled
@@ -1522,22 +1924,104 @@ class ProjectEditorViewModel(QObject):
         render: bool = True,
     ) -> None:
         rule = self._selected_rule_model()
-        if rule is None or not isinstance(rule.transform, DarkNebulaProcessingTransform):
+        if rule is None:
             return
-        clamped = max(0.0, min(1.0, value))
-        if key == "reveal_dust":
-            rule.transform.reveal_dust = clamped
-        elif key == "dust_contrast":
-            rule.transform.dust_contrast = clamped
-        elif key == "core_depth":
-            rule.transform.core_depth = clamped
-        elif key == "dust_colour":
-            rule.transform.dust_colour = clamped
-        elif key == "softness":
-            rule.transform.softness = clamped
+        transform = rule.transform
+        signed = max(-1.0, min(1.0, value / 100.0))
+        clamped = max(0.0, min(1.0, value / 100.0))
+        if isinstance(transform, ColourAmountTransform):
+            if key == "colour_range":
+                rule.match.colour_range = clamped
+            elif key == "faint_colour_sensitivity":
+                transform.faint_colour_sensitivity = clamped
+            elif key == "faint_range":
+                transform.faint_range = clamped
+            elif key == "reveal_faint_colour":
+                transform.reveal_faint_colour = clamped
+            elif key == "bright_colour_protection":
+                transform.bright_colour_protection = clamped
+            elif key == "highlight_protection":
+                transform.highlight_protection = clamped
+            else:
+                return
+        elif isinstance(transform, ToneShapingTransform):
+            if key == "shadows":
+                transform.shadows = signed
+            elif key == "midtones":
+                transform.midtones = signed
+            elif key == "highlights":
+                transform.highlights = signed
+            elif key == "contrast":
+                transform.contrast = signed
+            elif key == "black_protection":
+                transform.black_protection = clamped
+            elif key == "highlight_protection":
+                transform.highlight_protection = clamped
+            else:
+                return
+        elif isinstance(transform, LocalContrastTransform):
+            if key == "background_protection":
+                transform.background_protection = clamped
+            elif key == "highlight_protection":
+                transform.highlight_protection = clamped
+            elif key == "softness":
+                transform.softness = clamped
+            else:
+                return
+        elif isinstance(transform, VibranceTransform):
+            if key == "protect_strong_colours":
+                transform.protect_strong_colours = clamped
+            elif key == "protect_bright_areas":
+                transform.protect_bright_areas = clamped
+            else:
+                return
+        elif isinstance(transform, ColourTemperatureTransform):
+            if key == "tint":
+                transform.tint = signed
+            elif key == "protect_neutral_background":
+                transform.protect_neutral_background = clamped
+            else:
+                return
+        elif isinstance(transform, DarkNebulaProcessingTransform):
+            if key == "reveal_dust":
+                transform.reveal_dust = clamped
+            elif key == "dust_contrast":
+                transform.dust_contrast = clamped
+            elif key == "core_depth":
+                transform.core_depth = clamped
+            elif key == "dust_colour":
+                transform.dust_colour = clamped
+            elif key == "softness":
+                transform.softness = clamped
+            else:
+                return
         else:
             return
         self._after_metadata_change(render=render)
+
+    def set_selected_adjustment_choice_control(
+        self,
+        key: str,
+        value: str,
+        *,
+        render: bool = True,
+    ) -> None:
+        rule = self._selected_rule_model()
+        if rule is None:
+            return
+        if isinstance(rule.transform, LocalContrastTransform) and key == "structure_size":
+            valid = {option_id for option_id, _label in _local_contrast_structure_options()}
+            if value not in valid:
+                return
+            rule.transform.structure_size = cast(LocalContrastStructureSize, value)
+            self._after_metadata_change(render=render)
+            return
+        if isinstance(rule.transform, ColourAmountTransform) and key == "structure_size":
+            valid = {option_id for option_id, _label in _local_contrast_structure_options()}
+            if value not in valid:
+                return
+            rule.transform.structure_size = cast(LocalContrastStructureSize, value)
+            self._after_metadata_change(render=render)
 
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:
         rule = self._selected_rule_model()
@@ -1954,6 +2438,10 @@ class ProjectEditorViewModel(QObject):
             return "nebula"
         if kind == "dark_nebula_processing":
             return "dark_dust"
+        if kind == "colour_temperature":
+            return "combined"
+        if kind in {"tone_shaping", "local_contrast", "vibrance"}:
+            return "nebula"
         return self._default_target()
 
     def _normalized_colour_sample(
@@ -2016,6 +2504,10 @@ class ProjectEditorViewModel(QObject):
             "levels": "Levels",
             "saturation": "Saturation",
             "smoothness": "Colour Smoothness",
+            "tone_shaping": "Tone Shaping",
+            "local_contrast": "Local Contrast",
+            "vibrance": "Vibrance",
+            "colour_temperature": "Colour Temperature",
             "faux_hubble": "Faux Hubble",
             "faux_hoo": "Faux HOO",
             "foraxx": "Foraxx-Inspired",
@@ -2037,6 +2529,10 @@ class ProjectEditorViewModel(QObject):
             "levels": "Selected Levels",
             "saturation": "Selected Saturation",
             "smoothness": "Selected Smoothing",
+            "tone_shaping": "Selected Tone Shaping",
+            "local_contrast": "Selected Local Contrast",
+            "vibrance": "Selected Vibrance",
+            "colour_temperature": "Selected Colour Temperature",
             "faux_hubble": "Selected Faux Hubble",
             "faux_hoo": "Selected Faux HOO",
             "foraxx": "Selected Foraxx-Inspired",
@@ -2082,34 +2578,71 @@ class ProjectEditorViewModel(QObject):
             | ShiftColourPointTransform
             | BrightnessTransform
             | LevelsTransform
+            | ToneShapingTransform
+            | LocalContrastTransform
+            | VibranceTransform
+            | ColourTemperatureTransform
             | SaturationTransform
             | ColourSmoothingTransform
             | FauxPaletteTransform
             | DarkNebulaProcessingTransform
         )
         if kind == "blue":
-            transform = ColourAmountTransform(type="colour_amount", channel="blue", amount=1.0)
+            transform = ColourAmountTransform(
+                type="colour_amount",
+                channel="blue",
+                amount=1.0,
+                response_version="enhanced",
+                faint_colour_sensitivity=0.20,
+                faint_range=0.55,
+                structure_size="broad",
+                bright_colour_protection=0.75,
+                highlight_protection=0.65,
+                extended_range=False,
+            )
             match = RuleMatch(
                 colour_point=colour_point_id,
-                colour_range=0.10,
+                colour_range=0.18,
                 brightness=RangeSelection(min=0.0, max=1.0),
-                softness=0.35,
+                softness=0.40,
             )
         elif kind == "red":
-            transform = ColourAmountTransform(type="colour_amount", channel="red", amount=1.0)
+            transform = ColourAmountTransform(
+                type="colour_amount",
+                channel="red",
+                amount=1.0,
+                response_version="enhanced",
+                faint_colour_sensitivity=0.30,
+                faint_range=0.60,
+                structure_size="broad",
+                bright_colour_protection=0.75,
+                highlight_protection=0.65,
+                extended_range=False,
+            )
             match = RuleMatch(
                 colour_point=colour_point_id,
-                colour_range=0.10,
+                colour_range=0.18,
                 brightness=RangeSelection(min=0.0, max=1.0),
-                softness=0.35,
+                softness=0.40,
             )
         elif kind == "green":
-            transform = ColourAmountTransform(type="colour_amount", channel="green", amount=1.0)
+            transform = ColourAmountTransform(
+                type="colour_amount",
+                channel="green",
+                amount=1.0,
+                response_version="enhanced",
+                faint_colour_sensitivity=0.20,
+                faint_range=0.55,
+                structure_size="broad",
+                bright_colour_protection=0.75,
+                highlight_protection=0.65,
+                extended_range=False,
+            )
             match = RuleMatch(
                 colour_point=colour_point_id,
-                colour_range=0.10,
+                colour_range=0.18,
                 brightness=RangeSelection(min=0.0, max=1.0),
-                softness=0.35,
+                softness=0.40,
             )
         elif kind == "cyan":
             transform = ShiftColourPointTransform(
@@ -2166,6 +2699,30 @@ class ProjectEditorViewModel(QObject):
                 light=1.0,
                 brightest=1.0,
             )
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "tone_shaping":
+            transform = ToneShapingTransform(type="tone_shaping")
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "local_contrast":
+            transform = LocalContrastTransform(type="local_contrast")
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "vibrance":
+            transform = VibranceTransform(type="vibrance")
+            match = RuleMatch(
+                colour_point=None,
+                softness=0.45,
+            )
+        elif kind == "colour_temperature":
+            transform = ColourTemperatureTransform(type="colour_temperature")
             match = RuleMatch(
                 colour_point=None,
                 softness=0.45,

@@ -31,6 +31,7 @@ ColourChannel = Literal["red", "green", "blue"]
 SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
 FauxPaletteId = Literal["hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour"]
 FauxPaletteBalanceKey = Literal["gold", "green", "cyan", "red", "amber", "warm", "cool"]
+LocalContrastStructureSize = Literal["fine", "medium", "broad", "very_broad"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
 OutputFormat = Literal["png", "jpeg", "tiff"]
@@ -268,6 +269,14 @@ class ColourAmountTransform(StrictModel):
     channel: ColourChannel
     amount: float = Field(ge=0.0, le=4.0)
     preserve_luminance: bool = True
+    response_version: Literal["legacy", "enhanced"] = "legacy"
+    faint_colour_sensitivity: float = Field(default=0.0, ge=0.0, le=1.0)
+    reveal_faint_colour: float = Field(default=0.0, ge=0.0, le=1.0)
+    faint_range: float = Field(default=0.55, ge=0.0, le=1.0)
+    structure_size: LocalContrastStructureSize = "broad"
+    bright_colour_protection: float = Field(default=0.75, ge=0.0, le=1.0)
+    highlight_protection: float = Field(default=0.0, ge=0.0, le=1.0)
+    extended_range: bool = False
 
 
 class ShiftColourPointTransform(StrictModel):
@@ -294,6 +303,40 @@ class LevelsTransform(StrictModel):
     mid: float = Field(default=1.0, ge=0.0, le=4.0)
     light: float = Field(default=1.0, ge=0.0, le=4.0)
     brightest: float = Field(default=1.0, ge=0.0, le=4.0)
+
+
+class ToneShapingTransform(StrictModel):
+    type: Literal["tone_shaping"]
+    shadows: float = Field(default=0.0, ge=-1.0, le=1.0)
+    midtones: float = Field(default=0.0, ge=-1.0, le=1.0)
+    highlights: float = Field(default=0.0, ge=-1.0, le=1.0)
+    contrast: float = Field(default=0.0, ge=-1.0, le=1.0)
+    black_protection: float = Field(default=0.70, ge=0.0, le=1.0)
+    highlight_protection: float = Field(default=0.70, ge=0.0, le=1.0)
+
+
+class LocalContrastTransform(StrictModel):
+    type: Literal["local_contrast"]
+    amount: float = Field(default=0.0, ge=-1.0, le=1.0)
+    structure_size: LocalContrastStructureSize = "broad"
+    background_protection: float = Field(default=0.70, ge=0.0, le=1.0)
+    highlight_protection: float = Field(default=0.70, ge=0.0, le=1.0)
+    softness: float = Field(default=0.50, ge=0.0, le=1.0)
+
+
+class VibranceTransform(StrictModel):
+    type: Literal["vibrance"]
+    amount: float = Field(default=0.0, ge=-1.0, le=1.0)
+    protect_strong_colours: float = Field(default=0.75, ge=0.0, le=1.0)
+    protect_bright_areas: float = Field(default=0.50, ge=0.0, le=1.0)
+
+
+class ColourTemperatureTransform(StrictModel):
+    type: Literal["colour_temperature"]
+    warmth: float = Field(default=0.0, ge=-1.0, le=1.0)
+    tint: float = Field(default=0.0, ge=-1.0, le=1.0)
+    preserve_brightness: bool = True
+    protect_neutral_background: float = Field(default=0.50, ge=0.0, le=1.0)
 
 
 class ColourSmoothingTransform(StrictModel):
@@ -365,6 +408,10 @@ TransformationDeclaration = Annotated[
     | BrightnessTransform
     | SaturationTransform
     | LevelsTransform
+    | ToneShapingTransform
+    | LocalContrastTransform
+    | VibranceTransform
+    | ColourTemperatureTransform
     | ColourSmoothingTransform
     | FauxPaletteTransform
     | DarkNebulaProcessingTransform,

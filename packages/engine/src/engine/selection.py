@@ -11,6 +11,17 @@ LINEAR_LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 LUMA_WEIGHT = 0.25
 EPSILON = 1e-6
 CHANNEL_INDEX = {"red": 0, "green": 1, "blue": 2}
+COLOUR_AMOUNT_STANDARD_STOPS = 2.25
+COLOUR_AMOUNT_EXTENDED_STOPS = 3.00
+COLOUR_AMOUNT_REVEAL_LIFT = 0.18
+COLOUR_AMOUNT_REVEAL_CHANNEL_PUSH = 0.20
+COLOUR_AMOUNT_REVEAL_LOCAL_SEPARATION = 0.18
+COLOUR_AMOUNT_STRUCTURE_SIZE_FRACTIONS: dict[str, float] = {
+    "fine": 0.01,
+    "medium": 0.02,
+    "broad": 0.035,
+    "very_broad": 0.05,
+}
 FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS: dict[str, tuple[str, ...]] = {
     key: value for key, value in PROJECT_FAUX_PALETTE_SUPPORTED_KEYS.items()
 }
@@ -184,6 +195,59 @@ def rgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
     return np.asarray(stacked, dtype=np.float32)
 
 
+def oklab_to_linear_rgb(lab: np.ndarray) -> np.ndarray:
+    l_root = (
+        lab[..., 0]
+        + (0.3963377774 * lab[..., 1])
+        + (0.2158037573 * lab[..., 2])
+    )
+    m_root = (
+        lab[..., 0]
+        - (0.1055613458 * lab[..., 1])
+        - (0.0638541728 * lab[..., 2])
+    )
+    s_root = (
+        lab[..., 0]
+        - (0.0894841775 * lab[..., 1])
+        - (1.2914855480 * lab[..., 2])
+    )
+
+    l_channel = np.power(l_root, 3.0).astype(np.float32, copy=False)
+    m_channel = np.power(m_root, 3.0).astype(np.float32, copy=False)
+    s_channel = np.power(s_root, 3.0).astype(np.float32, copy=False)
+
+    red = (
+        (4.0767416621 * l_channel)
+        - (3.3077115913 * m_channel)
+        + (0.2309699292 * s_channel)
+    )
+    green = (
+        (-1.2684380046 * l_channel)
+        + (2.6097574011 * m_channel)
+        - (0.3413193965 * s_channel)
+    )
+    blue = (
+        (-0.0041960863 * l_channel)
+        - (0.7034186147 * m_channel)
+        + (1.7076147010 * s_channel)
+    )
+    stacked = np.stack([red, green, blue], axis=-1).astype(np.float32, copy=False)
+    return np.asarray(np.clip(stacked, 0.0, 1.0), dtype=np.float32)
+
+
+def _smoothstep_unit(t: np.ndarray) -> np.ndarray:
+    clamped = np.clip(t, 0.0, 1.0).astype(np.float32, copy=False)
+    stepped = (clamped * clamped * (3.0 - (2.0 * clamped))).astype(np.float32, copy=False)
+    return np.asarray(stepped, dtype=np.float32)
+
+
+def _smoothstep_range(value: np.ndarray, start: float, end: float) -> np.ndarray:
+    if end <= start:
+        binary = (value >= start).astype(np.float32)
+        return np.asarray(binary, dtype=np.float32)
+    return _smoothstep_unit((value - start) / max(end - start, EPSILON))
+
+
 def smooth_falloff(value: np.ndarray, limit: float, softness: float) -> np.ndarray:
     if limit <= 0.0:
         binary = np.where(value <= 0.0, 1.0, 0.0).astype(np.float32)
@@ -275,6 +339,229 @@ def compute_luminance(image_rgb: np.ndarray) -> np.ndarray:
     return np.asarray(luminance, dtype=np.float32)
 
 
+def _colour_amount_gain(
+    amount: float,
+    *,
+    response_version: str,
+    extended_range: bool,
+) -> float:
+    if response_version == "legacy":
+        return max(float(amount), EPSILON)
+    normalized = float(np.clip(amount - 1.0, -1.0, 1.0))
+    max_stops = COLOUR_AMOUNT_EXTENDED_STOPS if extended_range else COLOUR_AMOUNT_STANDARD_STOPS
+    return float(2.0 ** (normalized * max_stops))
+
+
+def _colour_family_bias(linear_rgb: np.ndarray, family: str) -> np.ndarray:
+    red = linear_rgb[..., 0]
+    green = linear_rgb[..., 1]
+    blue = linear_rgb[..., 2]
+    if family == "red":
+        bias = red - ((green + blue) * 0.5)
+    elif family == "green":
+        bias = green - ((red + blue) * 0.5)
+    elif family == "blue":
+        bias = blue - ((red + green) * 0.5)
+    elif family == "cyan":
+        bias = np.minimum(green, blue) - red
+    elif family == "yellow":
+        bias = np.minimum(red, green) - blue
+    else:
+        bias = np.zeros(linear_rgb.shape[:2], dtype=np.float32)
+    clipped = np.clip(bias, 0.0, 1.0).astype(np.float32, copy=False)
+    return np.asarray(clipped, dtype=np.float32)
+
+
+def _oklab_chroma_and_hue(image_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    lab = rgb_to_oklab(image_rgb)
+    chroma = np.sqrt((lab[..., 1] * lab[..., 1]) + (lab[..., 2] * lab[..., 2])).astype(
+        np.float32,
+        copy=False,
+    )
+    hue = np.mod(np.arctan2(lab[..., 2], lab[..., 1]) + np.pi, 2.0 * np.pi).astype(
+        np.float32,
+        copy=False,
+    )
+    return np.asarray(chroma, dtype=np.float32), np.asarray(hue, dtype=np.float32)
+
+
+def _circular_hue_distance(hue: np.ndarray, target_hue: float) -> np.ndarray:
+    raw = np.abs(hue - target_hue)
+    wrapped = np.minimum(raw, (2.0 * np.pi) - raw)
+    normalized = np.divide(
+        wrapped,
+        np.pi,
+        out=np.zeros_like(wrapped, dtype=np.float32),
+        where=np.pi > 0.0,
+    )
+    return np.asarray(normalized, dtype=np.float32)
+
+
+def _structure_radius_pixels(height: int, width: int, structure_size: str) -> int:
+    fraction = COLOUR_AMOUNT_STRUCTURE_SIZE_FRACTIONS.get(structure_size, 0.035)
+    shorter_edge = float(min(height, width))
+    return max(2, int(round(shorter_edge * fraction)))
+
+
+def faint_colour_weight(
+    image_rgb: np.ndarray,
+    target_rgb: np.ndarray,
+    family: str,
+    sensitivity: float,
+    *,
+    faint_range: float = 0.55,
+    structure_size: str = "broad",
+    bright_colour_protection: float = 0.75,
+) -> np.ndarray:
+    if sensitivity <= EPSILON:
+        return np.zeros(image_rgb.shape[:2], dtype=np.float32)
+
+    linear = srgb_to_linear(image_rgb)
+    luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0])).astype(np.float32, copy=False)
+    family_bias = _colour_family_bias(linear, family)
+    image_lab = rgb_to_oklab(image_rgb)
+    lightness = np.asarray(image_lab[..., 0], dtype=np.float32)
+    chroma = np.sqrt(
+        (image_lab[..., 1] * image_lab[..., 1]) + (image_lab[..., 2] * image_lab[..., 2])
+    ).astype(
+        np.float32,
+        copy=False,
+    )
+    hue = np.mod(np.arctan2(image_lab[..., 2], image_lab[..., 1]) + np.pi, 2.0 * np.pi).astype(
+        np.float32,
+        copy=False,
+    )
+    target_lab = rgb_to_oklab(target_rgb.reshape(1, 1, 3))[0, 0]
+    target_hue = float(np.mod(np.arctan2(target_lab[2], target_lab[1]) + np.pi, 2.0 * np.pi))
+    hue_distance = _circular_hue_distance(hue, target_hue)
+
+    hue_limit = 0.10 + (0.18 * float(np.clip(sensitivity, 0.0, 1.0)))
+    hue_similarity = 1.0 - _smoothstep_range(hue_distance, hue_limit * 0.45, hue_limit)
+
+    weak_signal_threshold = max(0.002, 0.012 - (0.009 * sensitivity))
+    weak_colour_confidence = _smoothstep_range(
+        family_bias,
+        weak_signal_threshold * 0.30,
+        weak_signal_threshold,
+    )
+
+    low_chroma_relaxation = 1.0 - _smoothstep_range(chroma, 0.06, 0.20)
+    hue_similarity = np.clip(
+        (hue_similarity * (1.0 - (0.20 * low_chroma_relaxation)))
+        + (weak_colour_confidence * 0.20 * low_chroma_relaxation),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    faint_end = 0.22 + (0.38 * float(np.clip(faint_range, 0.0, 1.0)))
+    faint_start = max(0.10, faint_end * 0.35)
+    faintness_weight = 1.0 - _smoothstep_range(lightness, faint_start, faint_end)
+    black_guard = _smoothstep_range(luminance, 0.014, 0.060)
+
+    protection = float(np.clip(bright_colour_protection, 0.0, 1.0))
+    bright_luma_start = 0.38 - (0.10 * protection)
+    bright_luma_end = 0.62 - (0.14 * protection)
+    bright_luma_guard = 1.0 - _smoothstep_range(
+        lightness,
+        bright_luma_start,
+        bright_luma_end,
+    )
+    bright_chroma_start = 0.07 - (0.03 * protection)
+    bright_chroma_end = 0.16 - (0.07 * protection)
+    bright_chroma_guard = 1.0 - _smoothstep_range(
+        chroma,
+        bright_chroma_start,
+        bright_chroma_end,
+    )
+    bright_suppression = np.clip(
+        (bright_luma_guard * 0.65) + (bright_chroma_guard * 0.35),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    structure_seed = np.clip(
+        ((0.55 + (0.45 * hue_similarity)) * weak_colour_confidence * black_guard),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    broad_radius = _structure_radius_pixels(
+        image_rgb.shape[0],
+        image_rgb.shape[1],
+        structure_size,
+    )
+    broad_support = box_blur(np.repeat(structure_seed[..., None], 3, axis=-1), broad_radius)[..., 0]
+    broad_threshold = max(0.015, 0.040 - (0.020 * sensitivity))
+    structural_support = _smoothstep_range(
+        broad_support.astype(np.float32, copy=False),
+        broad_threshold * 0.55,
+        broad_threshold,
+    )
+
+    combined = np.clip(
+        hue_similarity
+        * weak_colour_confidence
+        * faintness_weight.astype(np.float32, copy=False)
+        * bright_suppression
+        * black_guard.astype(np.float32, copy=False)
+        * structural_support.astype(np.float32, copy=False),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    return np.asarray(combined, dtype=np.float32)
+
+
+def _build_faint_revealed_linear(
+    image_linear: np.ndarray,
+    original_luminance: np.ndarray,
+    channel: str,
+    *,
+    structure_size: str,
+) -> np.ndarray:
+    revealed = image_linear.copy()
+    shadow_focus = (1.0 - _smoothstep_range(original_luminance, 0.05, 0.45)).astype(
+        np.float32,
+        copy=False,
+    )
+    black_guard = _smoothstep_range(original_luminance, 0.014, 0.060)
+    lift_focus = (shadow_focus * black_guard).astype(np.float32, copy=False)
+
+    revealed = np.clip(
+        revealed + ((1.0 - revealed) * lift_focus[..., None] * COLOUR_AMOUNT_REVEAL_LIFT),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    detail_radius = max(
+        1,
+        _structure_radius_pixels(
+            image_linear.shape[0],
+            image_linear.shape[1],
+            structure_size,
+        )
+        // 2,
+    )
+    low_frequency = box_blur(revealed, detail_radius)
+    revealed = np.clip(
+        revealed
+        + (
+            (revealed - low_frequency)
+            * lift_focus[..., None]
+            * COLOUR_AMOUNT_REVEAL_LOCAL_SEPARATION
+        ),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    channel_index = CHANNEL_INDEX[channel]
+    revealed[..., channel_index] = np.clip(
+        revealed[..., channel_index]
+        + ((1.0 - revealed[..., channel_index]) * lift_focus * COLOUR_AMOUNT_REVEAL_CHANNEL_PUSH),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    return np.asarray(revealed, dtype=np.float32)
+
+
 def _preserve_luminance(transformed: np.ndarray, original_luminance: np.ndarray) -> np.ndarray:
     transformed_luminance = np.tensordot(transformed, LINEAR_LUMA, axes=([-1], [0]))
     scale = np.divide(original_luminance, np.maximum(transformed_luminance, EPSILON))
@@ -325,21 +612,68 @@ def apply_colour_amount(
     channel: str,
     amount: float,
     preserve_luminance: bool,
+    *,
+    response_version: str = "legacy",
+    extended_range: bool = False,
+    highlight_protection: float = 0.0,
+    reveal_faint_colour: float = 0.0,
+    reveal_mask: np.ndarray | None = None,
+    structure_size: str = "broad",
 ) -> np.ndarray:
     linear = srgb_to_linear(current_rgb)
     original_luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0]))
     transformed = linear.copy()
     channel_index = CHANNEL_INDEX[channel]
-    transformed[..., channel_index] = np.clip(
-        transformed[..., channel_index] * amount,
-        0.0,
-        1.0,
+    gain = _colour_amount_gain(
+        amount,
+        response_version=response_version,
+        extended_range=extended_range,
     )
+    transformed[..., channel_index] = (
+        1.0
+        - np.power(
+            np.clip(1.0 - transformed[..., channel_index], 0.0, 1.0),
+            gain,
+        )
+    ).astype(np.float32, copy=False)
     # When reducing a colour family, preserving full luminance can push the remaining
     # channels too aggressively and create an unintended complementary cast.
-    if preserve_luminance and amount >= 1.0:
+    if preserve_luminance and gain >= 1.0:
         transformed = _preserve_luminance(transformed, original_luminance)
-    return apply_weighted_image_blend(current_rgb, transformed, weights)
+
+    effective_weights = np.asarray(weights, dtype=np.float32)
+    if highlight_protection > EPSILON:
+        highlight_guard = 1.0 - (
+            highlight_protection * _smoothstep_range(original_luminance, 0.55, 0.97)
+        )
+        effective_weights = np.clip(
+            effective_weights * highlight_guard.astype(np.float32, copy=False),
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+
+    output_linear = (
+        linear * (1.0 - effective_weights[..., None])
+    ) + (transformed * effective_weights[..., None])
+
+    if reveal_faint_colour > EPSILON and reveal_mask is not None:
+        reveal_weights = np.clip(
+            reveal_mask * reveal_faint_colour,
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+        revealed_linear = _build_faint_revealed_linear(
+            output_linear,
+            original_luminance,
+            channel,
+            structure_size=structure_size,
+        )
+        output_linear = (
+            output_linear * (1.0 - reveal_weights[..., None])
+        ) + (revealed_linear * reveal_weights[..., None])
+
+    output = np.clip(linear_to_srgb(output_linear), 0.0, 1.0).astype(np.float32, copy=False)
+    return np.asarray(output, dtype=np.float32)
 
 
 def apply_shift_colour_point(
@@ -423,6 +757,94 @@ def apply_levels_transform(
     return apply_weighted_image_blend(current_rgb, transformed, weights)
 
 
+def _evaluate_monotonic_curve(
+    x_values: np.ndarray,
+    control_x: np.ndarray,
+    control_y: np.ndarray,
+) -> np.ndarray:
+    mapped = np.empty_like(x_values, dtype=np.float32)
+    mapped[x_values <= control_x[0]] = control_y[0]
+    mapped[x_values >= control_x[-1]] = control_y[-1]
+
+    for index in range(len(control_x) - 1):
+        left = control_x[index]
+        right = control_x[index + 1]
+        in_segment = np.logical_and(x_values >= left, x_values <= right)
+        if not np.any(in_segment):
+            continue
+        t = ((x_values[in_segment] - left) / max(right - left, EPSILON)).astype(
+            np.float32,
+            copy=False,
+        )
+        smooth_t = _smoothstep_unit(t)
+        mapped[in_segment] = (
+            (1.0 - smooth_t) * control_y[index]
+        ) + (smooth_t * control_y[index + 1])
+
+    return np.asarray(mapped, dtype=np.float32)
+
+
+def apply_tone_shaping(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    shadows: float,
+    midtones: float,
+    highlights: float,
+    contrast: float,
+    black_protection: float,
+    highlight_protection: float,
+) -> np.ndarray:
+    if (
+        abs(shadows) <= EPSILON
+        and abs(midtones) <= EPSILON
+        and abs(highlights) <= EPSILON
+        and abs(contrast) <= EPSILON
+    ):
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
+
+    linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0])).astype(np.float32, copy=False)
+
+    control_x = np.asarray([0.0, 0.08, 0.26, 0.52, 0.82, 1.0], dtype=np.float32)
+    shadow_guard = 1.0 - (0.85 * black_protection)
+    highlight_guard = 1.0 - (0.85 * highlight_protection)
+
+    control_y = np.asarray(
+        [
+            0.0,
+            0.08 + (shadows * 0.18 * shadow_guard),
+            0.26 + (shadows * 0.10) + (midtones * 0.08),
+            0.52 + (midtones * 0.16),
+            0.82 + (highlights * 0.12 * highlight_guard) + (midtones * 0.02),
+            1.0,
+        ],
+        dtype=np.float32,
+    )
+    if abs(contrast) > EPSILON:
+        contrast_scale = 1.0 + (contrast * 0.45)
+        control_y[1:-1] = 0.5 + ((control_y[1:-1] - 0.5) * contrast_scale)
+
+    control_y = np.clip(control_y, 0.0, 1.0).astype(np.float32, copy=False)
+    control_y = np.maximum.accumulate(control_y).astype(np.float32, copy=False)
+    control_y[-1] = 1.0
+
+    mapped_luminance = _evaluate_monotonic_curve(luminance, control_x, control_y)
+    scale = np.divide(
+        mapped_luminance,
+        np.maximum(luminance, EPSILON),
+        out=np.ones_like(mapped_luminance, dtype=np.float32),
+        where=luminance > EPSILON,
+    )
+    transformed = np.clip(linear * scale[..., None], 0.0, 1.0).astype(np.float32, copy=False)
+    dark_fill = np.repeat(mapped_luminance[..., None], 3, axis=-1).astype(np.float32, copy=False)
+    transformed = np.where(luminance[..., None] > EPSILON, transformed, dark_fill).astype(
+        np.float32,
+        copy=False,
+    )
+    return apply_weighted_image_blend(current_rgb, transformed, weights)
+
+
 def box_blur(image_rgb: np.ndarray, radius_pixels: int) -> np.ndarray:
     if radius_pixels <= 0:
         return image_rgb.astype(np.float32, copy=True)
@@ -464,6 +886,191 @@ def apply_colour_smoothing(
     output = (current_rgb * (1.0 - mix[..., None])) + (blurred * mix[..., None])
     clipped = np.clip(output, 0.0, 1.0).astype(np.float32, copy=False)
     return np.asarray(clipped, dtype=np.float32)
+
+
+def _local_contrast_radius_fraction(structure_size: str) -> float:
+    return {
+        "fine": 0.020,
+        "medium": 0.100,
+        "broad": 0.160,
+        "very_broad": 0.240,
+    }.get(structure_size, 0.160)
+
+
+def apply_local_contrast(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    amount: float,
+    structure_size: str,
+    background_protection: float,
+    highlight_protection: float,
+    softness: float,
+) -> np.ndarray:
+    if abs(amount) <= EPSILON:
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
+
+    linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(linear, LINEAR_LUMA, axes=([-1], [0])).astype(np.float32, copy=False)
+    shorter_edge = float(min(current_rgb.shape[0], current_rgb.shape[1]))
+    radius_pixels = int(round(shorter_edge * _local_contrast_radius_fraction(structure_size)))
+    minimum_radius = {
+        "fine": 1,
+        "medium": 9,
+        "broad": 12,
+        "very_broad": 18,
+    }.get(structure_size, 12)
+    radius_pixels = max(minimum_radius, radius_pixels)
+
+    local_field = box_blur(np.repeat(luminance[..., None], 3, axis=-1), radius_pixels)[..., 0]
+    local_detail = (luminance - local_field).astype(np.float32, copy=False)
+
+    if softness > 0.0:
+        softness_radius = max(1, int(round(radius_pixels * (0.35 + (0.85 * softness)))))
+        softened_detail = box_blur(
+            np.repeat(local_detail[..., None], 3, axis=-1),
+            softness_radius,
+        )[..., 0].astype(np.float32, copy=False)
+        blend = float(np.clip(softness * 0.65, 0.0, 1.0))
+        local_detail = (
+            (local_detail * (1.0 - blend)) + (softened_detail * blend)
+        ).astype(np.float32, copy=False)
+
+    detail_threshold = 0.0015 + (0.010 * softness)
+    detail_support = _smoothstep_range(
+        np.abs(local_detail),
+        detail_threshold * 0.35,
+        detail_threshold,
+    )
+    background_support = _smoothstep_range(
+        local_field,
+        0.001 + (0.006 * background_protection),
+        0.010 + (0.028 * background_protection),
+    )
+    pixel_support = _smoothstep_range(
+        luminance,
+        0.0015 + (0.003 * background_protection),
+        0.010 + (0.020 * background_protection),
+    )
+    highlight_guard = 1.0 - (
+        (0.55 + (0.45 * highlight_protection)) * _smoothstep_range(luminance, 0.35, 0.92)
+    )
+    protection = np.clip(
+        background_support
+        * pixel_support
+        * (0.30 + (0.70 * detail_support))
+        * highlight_guard,
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    enhanced_luminance = np.clip(
+        luminance + (local_detail * amount * 3.50 * protection),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    scale = np.divide(
+        enhanced_luminance,
+        np.maximum(luminance, EPSILON),
+        out=np.ones_like(enhanced_luminance, dtype=np.float32),
+        where=luminance > EPSILON,
+    )
+    transformed = np.clip(linear * scale[..., None], 0.0, 1.0).astype(np.float32, copy=False)
+    dark_fill = np.repeat(enhanced_luminance[..., None], 3, axis=-1).astype(np.float32, copy=False)
+    transformed = np.where(luminance[..., None] > EPSILON, transformed, dark_fill).astype(
+        np.float32,
+        copy=False,
+    )
+    return apply_weighted_image_blend(current_rgb, transformed, weights)
+
+
+def apply_vibrance(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    amount: float,
+    protect_strong_colours: float,
+    protect_bright_areas: float,
+) -> np.ndarray:
+    if abs(amount) <= EPSILON:
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
+
+    lab = rgb_to_oklab(current_rgb)
+    chroma = np.sqrt((lab[..., 1] * lab[..., 1]) + (lab[..., 2] * lab[..., 2])).astype(
+        np.float32,
+        copy=False,
+    )
+    original_linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(original_linear, LINEAR_LUMA, axes=([-1], [0])).astype(
+        np.float32,
+        copy=False,
+    )
+
+    strong_threshold = 0.055 + (0.12 * (1.0 - protect_strong_colours))
+    strong_rolloff = strong_threshold + 0.11
+    chroma_support = 1.0 - _smoothstep_range(chroma, strong_threshold, strong_rolloff)
+    bright_guard = 1.0 - (
+        protect_bright_areas * _smoothstep_range(luminance, 0.55, 0.96)
+    )
+    effect = (amount * chroma_support * bright_guard).astype(np.float32, copy=False)
+    scale = np.clip(1.0 + (effect * 0.95), 0.0, 4.0).astype(np.float32, copy=False)
+
+    transformed_lab = lab.copy()
+    transformed_lab[..., 1] = (transformed_lab[..., 1] * scale).astype(np.float32, copy=False)
+    transformed_lab[..., 2] = (transformed_lab[..., 2] * scale).astype(np.float32, copy=False)
+
+    transformed = oklab_to_linear_rgb(transformed_lab)
+    transformed = _preserve_luminance(transformed, luminance)
+    return apply_weighted_image_blend(current_rgb, transformed, weights)
+
+
+def apply_colour_temperature(
+    current_rgb: np.ndarray,
+    weights: np.ndarray,
+    *,
+    warmth: float,
+    tint: float,
+    preserve_brightness: bool,
+    protect_neutral_background: float,
+) -> np.ndarray:
+    if abs(warmth) <= EPSILON and abs(tint) <= EPSILON:
+        return np.asarray(current_rgb.astype(np.float32, copy=True), dtype=np.float32)
+
+    lab = rgb_to_oklab(current_rgb)
+    original_linear = srgb_to_linear(current_rgb)
+    luminance = np.tensordot(original_linear, LINEAR_LUMA, axes=([-1], [0])).astype(
+        np.float32,
+        copy=False,
+    )
+    chroma = np.sqrt((lab[..., 1] * lab[..., 1]) + (lab[..., 2] * lab[..., 2])).astype(
+        np.float32,
+        copy=False,
+    )
+
+    luminance_support = _smoothstep_range(luminance, 0.01, 0.18)
+    chroma_support = _smoothstep_range(chroma, 0.008, 0.070)
+    neutral_guard = 1.0 - (
+        protect_neutral_background
+        * (1.0 - luminance_support)
+        * (1.0 - chroma_support)
+    )
+
+    transformed_lab = lab.copy()
+    transformed_lab[..., 1] = (
+        transformed_lab[..., 1]
+        + (warmth * 0.018 * neutral_guard)
+        + (tint * 0.085 * neutral_guard)
+    ).astype(np.float32, copy=False)
+    transformed_lab[..., 2] = (
+        transformed_lab[..., 2]
+        + (warmth * 0.125 * neutral_guard)
+        - (tint * 0.010 * neutral_guard)
+    ).astype(np.float32, copy=False)
+
+    transformed = oklab_to_linear_rgb(transformed_lab)
+    if preserve_brightness:
+        transformed = _preserve_luminance(transformed, luminance)
+    return apply_weighted_image_blend(current_rgb, transformed, weights)
 
 
 def apply_dark_nebula_processing(

@@ -131,8 +131,12 @@ _ADJUSTMENT_MENU_ITEMS: tuple[tuple[str, AdjustmentKind], ...] = tuple(
             ("Yellow", "yellow"),
             ("Brightness", "brightness"),
             ("Levels", "levels"),
+            ("Local Contrast", "local_contrast"),
             ("Saturation", "saturation"),
+            ("Tone Shaping", "tone_shaping"),
+            ("Colour Temperature", "colour_temperature"),
             ("Colour Smoothness", "smoothness"),
+            ("Vibrance", "vibrance"),
             ("Faux Hubble", "faux_hubble"),
             ("Faux HOO", "faux_hoo"),
             ("Foraxx-Inspired", "foraxx"),
@@ -1848,6 +1852,19 @@ class MainWindow(QMainWindow):
                 spin_step = 1.0
                 spin_decimals = 0
                 spin_suffix = "%"
+            elif summary.transform_type in {
+                "local_contrast",
+                "vibrance",
+                "colour_temperature",
+            }:
+                spin_value = max(
+                    _MULTIPLIER_UI_MIN,
+                    min(_MULTIPLIER_UI_MAX, summary.primary_value * 100.0),
+                )
+                spin_range = (_MULTIPLIER_UI_MIN, _MULTIPLIER_UI_MAX)
+                spin_step = 1.0
+                spin_decimals = 0
+                spin_suffix = "%"
             else:
                 spin_value = max(
                     _MULTIPLIER_UI_MIN,
@@ -1906,6 +1923,10 @@ class MainWindow(QMainWindow):
             with QSignalBlocker(self.option_checkbox):
                 self.option_checkbox.setChecked(summary.option_enabled)
         self._refresh_palette_balance_section(summary)
+        self.extra_adjustment_controls_title.setText(
+            summary.extra_controls_title or "Adjustment Controls"
+        )
+        self.extra_adjustment_controls_helper.setText(summary.extra_controls_helper or "")
         self._refresh_extra_adjustment_controls(summary)
 
         self.scope_title_label.setVisible(True)
@@ -1923,31 +1944,53 @@ class MainWindow(QMainWindow):
         self.move_later_button.setEnabled(True)
 
     def _refresh_extra_adjustment_controls(self, summary: AdjustmentSummary) -> None:
-        self.extra_adjustment_controls_section.setVisible(bool(summary.extra_numeric_controls))
-        if not summary.extra_numeric_controls:
+        has_controls = bool(summary.extra_numeric_controls or summary.choice_controls)
+        self.extra_adjustment_controls_section.setVisible(has_controls)
+        if not has_controls:
             self._clear_layout(self.extra_adjustment_controls_layout)
             return
 
         self._clear_layout(self.extra_adjustment_controls_layout)
-        for control in summary.extra_numeric_controls:
-            label = QLabel(control.label)
+        for choice_control in summary.choice_controls:
+            label = QLabel(choice_control.label)
+            label.setStyleSheet("font-weight: 600;")
+
+            selector = QComboBox(self.extra_adjustment_controls_widget)
+            for option_id, option_label in choice_control.options:
+                selector.addItem(option_label, option_id)
+            with QSignalBlocker(selector):
+                selector.setCurrentIndex(max(0, selector.findData(choice_control.value)))
+            selector.setToolTip(choice_control.helper_text)
+            selector.currentIndexChanged.connect(
+                lambda index, key=choice_control.key, widget=selector:
+                self._on_choice_control_changed(key, index, widget)
+            )
+
+            self.extra_adjustment_controls_layout.addWidget(label)
+            self.extra_adjustment_controls_layout.addWidget(selector)
+
+        for numeric_control in summary.extra_numeric_controls:
+            label = QLabel(numeric_control.label)
             label.setStyleSheet("font-weight: 600;")
             slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setRange(0, 100)
-            slider.setValue(int(round(control.value * 100.0)))
-            slider.setToolTip(control.helper_text)
+            slider.setRange(
+                int(round(numeric_control.minimum)),
+                int(round(numeric_control.maximum)),
+            )
+            slider.setValue(int(round(numeric_control.value)))
+            slider.setToolTip(numeric_control.helper_text)
             slider.sliderPressed.connect(self._on_adjustment_slider_pressed)
             slider.sliderReleased.connect(self._on_adjustment_slider_released)
 
             input_widget = QDoubleSpinBox()
-            input_widget.setDecimals(0)
-            input_widget.setRange(0.0, 100.0)
-            input_widget.setSingleStep(1.0)
-            input_widget.setSuffix("%")
+            input_widget.setDecimals(numeric_control.decimals)
+            input_widget.setRange(numeric_control.minimum, numeric_control.maximum)
+            input_widget.setSingleStep(numeric_control.step)
+            input_widget.setSuffix(numeric_control.suffix)
             input_widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             input_widget.setKeyboardTracking(False)
-            input_widget.setValue(control.value * 100.0)
-            input_widget.setToolTip(control.helper_text)
+            input_widget.setValue(numeric_control.value)
+            input_widget.setToolTip(numeric_control.helper_text)
             _allow_horizontal_shrink(input_widget)
 
             row = QWidget(self.extra_adjustment_controls_widget)
@@ -1959,7 +2002,7 @@ class MainWindow(QMainWindow):
             row_layout.addWidget(input_widget)
 
             slider.valueChanged.connect(
-                lambda value, key=control.key, widget=input_widget:
+                lambda value, key=numeric_control.key, widget=input_widget:
                 self._on_extra_control_slider_changed(
                     key,
                     value,
@@ -1967,11 +2010,8 @@ class MainWindow(QMainWindow):
                 )
             )
             input_widget.valueChanged.connect(
-                lambda value, key=control.key, widget=slider: self._on_extra_control_input_changed(
-                    key,
-                    value,
-                    widget,
-                )
+                lambda value, key=numeric_control.key, widget=slider:
+                self._on_extra_control_input_changed(key, value, widget)
             )
             input_widget.editingFinished.connect(self._schedule_adjustment_render)
 
@@ -2315,6 +2355,22 @@ class MainWindow(QMainWindow):
         self.view_model.set_selected_adjustment_palette_balance(key, value, render=False)
         self._schedule_adjustment_render()
 
+    def _on_choice_control_changed(
+        self,
+        key: str,
+        index: int,
+        selector: QComboBox,
+    ) -> None:
+        if index < 0:
+            return
+        value = selector.itemData(index)
+        if isinstance(value, str):
+            self.view_model.set_selected_adjustment_choice_control(
+                key,
+                value,
+                render=not self.view_model.is_adjustment_interacting,
+            )
+
     def _on_extra_control_slider_changed(
         self,
         key: str,
@@ -2325,7 +2381,7 @@ class MainWindow(QMainWindow):
             input_widget.setValue(float(value))
         self.view_model.set_selected_adjustment_extra_numeric_control(
             key,
-            value / 100.0,
+            float(value),
             render=not self.view_model.is_adjustment_interacting,
         )
 
@@ -2339,7 +2395,7 @@ class MainWindow(QMainWindow):
             slider.setValue(int(round(value)))
         self.view_model.set_selected_adjustment_extra_numeric_control(
             key,
-            value / 100.0,
+            value,
             render=False,
         )
         self._schedule_adjustment_render()
@@ -2367,6 +2423,12 @@ class MainWindow(QMainWindow):
         elif summary.transform_type == "faux_palette":
             normalized = value / 100.0
         elif summary.transform_type == "dark_nebula_processing":
+            normalized = value / 100.0
+        elif summary.transform_type in {
+            "local_contrast",
+            "vibrance",
+            "colour_temperature",
+        }:
             normalized = value / 100.0
         else:
             normalized = 1.0 + (value / 100.0)

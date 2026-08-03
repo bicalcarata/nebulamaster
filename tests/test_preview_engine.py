@@ -5,10 +5,19 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 import yaml
 from engine import EXIT_VALIDATION_SUCCESS
 from engine.preview import render_preview, render_preview_image
-from engine.selection import apply_faux_palette, compute_luminance
+from engine.selection import (
+    apply_colour_temperature,
+    apply_faux_palette,
+    apply_local_contrast,
+    apply_tone_shaping,
+    apply_vibrance,
+    compute_luminance,
+    rgb_to_oklab,
+)
 from engine.semantic import analyze_dark_dust, dark_dust_influence, star_influence
 from engine.validation import load_valid_project_bundle
 from image_io import load_canonical_image, resize_to_max_edge
@@ -156,6 +165,31 @@ def _dark_nebula_fixture_float_image(size: tuple[int, int] = (96, 64)) -> np.nda
     return np.clip(image, 0.0, 1.0).astype(np.float32, copy=False)
 
 
+def _structured_rgb_fixture_image(size: tuple[int, int] = (96, 64)) -> np.ndarray:
+    width, height = size
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    x = xx / max(width - 1, 1)
+    y = yy / max(height - 1, 1)
+
+    image = np.full((height, width, 3), [0.025, 0.026, 0.030], dtype=np.float32)
+    image += (0.12 * x[..., None]).astype(np.float32, copy=False)
+    image += (0.05 * y[..., None]).astype(np.float32, copy=False)
+
+    warm_cloud = np.exp(-(((x - 0.34) ** 2) / 0.030 + ((y - 0.42) ** 2) / 0.040)).astype(
+        np.float32
+    )
+    cool_cloud = np.exp(-(((x - 0.66) ** 2) / 0.040 + ((y - 0.62) ** 2) / 0.050)).astype(
+        np.float32
+    )
+    ridge = np.exp(-(((x - 0.50) ** 2) / 0.090 + ((y - 0.28) ** 2) / 0.018)).astype(np.float32)
+
+    image += warm_cloud[..., None] * np.asarray([0.34, 0.18, 0.12], dtype=np.float32)
+    image += cool_cloud[..., None] * np.asarray([0.08, 0.24, 0.38], dtype=np.float32)
+    image += ridge[..., None] * np.asarray([0.20, 0.19, 0.16], dtype=np.float32)
+
+    return np.clip(image, 0.0, 1.0).astype(np.float32, copy=False)
+
+
 def _write_dark_nebula_source_image(path: Path, size: tuple[int, int] = (96, 64)) -> None:
     image = _dark_nebula_fixture_float_image(size)
     encoded = np.clip(image * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8, copy=False)
@@ -217,28 +251,58 @@ def _rule_colour_amount(
     name: str,
     enabled: bool = True,
     selection_source: str = "current",
+    target: str = "nebula",
     regions: list[str] | None = None,
+    channel: str = "blue",
+    colour_point: str = "nebula-blue",
+    colour_range: float = 0.18,
     amount: float = 2.0,
+    response_version: str | None = None,
+    faint_colour_sensitivity: float | None = None,
+    reveal_faint_colour: float | None = None,
+    faint_range: float | None = None,
+    structure_size: str | None = None,
+    bright_colour_protection: float | None = None,
+    highlight_protection: float | None = None,
+    extended_range: bool | None = None,
 ) -> dict[str, Any]:
+    transform: dict[str, Any] = {
+        "type": "colour_amount",
+        "channel": channel,
+        "amount": amount,
+        "preserve_luminance": False,
+    }
+    if response_version is not None:
+        transform["response_version"] = response_version
+    if faint_colour_sensitivity is not None:
+        transform["faint_colour_sensitivity"] = faint_colour_sensitivity
+    if reveal_faint_colour is not None:
+        transform["reveal_faint_colour"] = reveal_faint_colour
+    if faint_range is not None:
+        transform["faint_range"] = faint_range
+    if structure_size is not None:
+        transform["structure_size"] = structure_size
+    if bright_colour_protection is not None:
+        transform["bright_colour_protection"] = bright_colour_protection
+    if highlight_protection is not None:
+        transform["highlight_protection"] = highlight_protection
+    if extended_range is not None:
+        transform["extended_range"] = extended_range
+
     return {
         "id": rule_id,
         "name": name,
         "enabled": enabled,
         "selection_source": selection_source,
-        "target": "nebula",
+        "target": target,
         "regions": regions or [],
         "match": {
-            "colour_point": "nebula-blue",
-            "colour_range": 0.18,
+            "colour_point": colour_point,
+            "colour_range": colour_range,
             "brightness": {"min": 0.0, "max": 1.0},
             "softness": 0.5,
         },
-        "transform": {
-            "type": "colour_amount",
-            "channel": "blue",
-            "amount": amount,
-            "preserve_luminance": False,
-        },
+        "transform": transform,
     }
 
 
@@ -370,6 +434,126 @@ def _rule_dark_nebula_processing(
     }
 
 
+def _rule_tone_shaping(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "nebula",
+    regions: list[str] | None = None,
+    shadows: float = 0.0,
+    midtones: float = 0.0,
+    highlights: float = 0.0,
+    contrast: float = 0.0,
+    black_protection: float = 0.70,
+    highlight_protection: float = 0.70,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "tone_shaping",
+            "shadows": shadows,
+            "midtones": midtones,
+            "highlights": highlights,
+            "contrast": contrast,
+            "black_protection": black_protection,
+            "highlight_protection": highlight_protection,
+        },
+    }
+
+
+def _rule_local_contrast(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "nebula",
+    regions: list[str] | None = None,
+    amount: float = 0.0,
+    structure_size: str = "broad",
+    background_protection: float = 0.70,
+    highlight_protection: float = 0.70,
+    softness: float = 0.50,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "local_contrast",
+            "amount": amount,
+            "structure_size": structure_size,
+            "background_protection": background_protection,
+            "highlight_protection": highlight_protection,
+            "softness": softness,
+        },
+    }
+
+
+def _rule_vibrance(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "nebula",
+    regions: list[str] | None = None,
+    amount: float = 0.0,
+    protect_strong_colours: float = 0.75,
+    protect_bright_areas: float = 0.50,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "vibrance",
+            "amount": amount,
+            "protect_strong_colours": protect_strong_colours,
+            "protect_bright_areas": protect_bright_areas,
+        },
+    }
+
+
+def _rule_colour_temperature(
+    *,
+    rule_id: str,
+    name: str,
+    target: str = "combined",
+    regions: list[str] | None = None,
+    warmth: float = 0.0,
+    tint: float = 0.0,
+    preserve_brightness: bool = True,
+    protect_neutral_background: float = 0.50,
+) -> dict[str, Any]:
+    return {
+        "id": rule_id,
+        "name": name,
+        "enabled": True,
+        "selection_source": "current",
+        "target": target,
+        "regions": regions or [],
+        "match": {"softness": 0.5},
+        "transform": {
+            "type": "colour_temperature",
+            "warmth": warmth,
+            "tint": tint,
+            "preserve_brightness": preserve_brightness,
+            "protect_neutral_background": protect_neutral_background,
+        },
+    }
+
+
 def _faux_palette_swatch_image() -> np.ndarray:
     return np.asarray(
         [
@@ -402,6 +586,347 @@ def _palette_output(
         preserve_brightness=preserve_brightness,
         colour_balance=colour_balance,
     )
+
+
+@pytest.mark.parametrize(
+    ("label", "builder"),
+    [
+        (
+            "tone_shaping",
+            lambda image, weights: apply_tone_shaping(
+                image,
+                weights,
+                shadows=0.0,
+                midtones=0.0,
+                highlights=0.0,
+                contrast=0.0,
+                black_protection=0.70,
+                highlight_protection=0.70,
+            ),
+        ),
+        (
+            "local_contrast",
+            lambda image, weights: apply_local_contrast(
+                image,
+                weights,
+                amount=0.0,
+                structure_size="broad",
+                background_protection=0.70,
+                highlight_protection=0.70,
+                softness=0.50,
+            ),
+        ),
+        (
+            "vibrance",
+            lambda image, weights: apply_vibrance(
+                image,
+                weights,
+                amount=0.0,
+                protect_strong_colours=0.75,
+                protect_bright_areas=0.50,
+            ),
+        ),
+        (
+            "colour_temperature",
+            lambda image, weights: apply_colour_temperature(
+                image,
+                weights,
+                warmth=0.0,
+                tint=0.0,
+                preserve_brightness=True,
+                protect_neutral_background=0.50,
+            ),
+        ),
+    ],
+)
+def test_new_adjustments_neutral_values_leave_image_unchanged(
+    label: str,
+    builder: Any,
+) -> None:
+    image = _structured_rgb_fixture_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    result = builder(image, weights)
+
+    assert np.all(np.isfinite(result)), label
+    assert np.allclose(result, image, atol=1e-6), label
+
+
+def test_tone_shaping_remains_monotonic_on_a_smooth_gradient() -> None:
+    gradient = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+    image = np.repeat(gradient[None, :, None], 3, axis=2)
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    result = apply_tone_shaping(
+        image,
+        weights,
+        shadows=0.35,
+        midtones=0.45,
+        highlights=-0.20,
+        contrast=0.30,
+        black_protection=0.70,
+        highlight_protection=0.80,
+    )
+    luminance = compute_luminance(result)[0]
+
+    assert np.all(np.diff(luminance) >= -1e-5)
+
+
+def test_local_contrast_structure_size_changes_the_result_scale() -> None:
+    image = _dark_nebula_fixture_float_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    fine = apply_local_contrast(
+        image,
+        weights,
+        amount=0.50,
+        structure_size="fine",
+        background_protection=0.70,
+        highlight_protection=0.70,
+        softness=0.50,
+    )
+    broad = apply_local_contrast(
+        image,
+        weights,
+        amount=0.50,
+        structure_size="very_broad",
+        background_protection=0.70,
+        highlight_protection=0.70,
+        softness=0.50,
+    )
+
+    assert not np.allclose(fine, broad, atol=1e-6)
+
+
+def test_local_contrast_keeps_a_flat_image_substantially_unchanged() -> None:
+    image = np.full((24, 24, 3), 0.14, dtype=np.float32)
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    result = apply_local_contrast(
+        image,
+        weights,
+        amount=0.75,
+        structure_size="broad",
+        background_protection=0.70,
+        highlight_protection=0.70,
+        softness=0.50,
+    )
+
+    assert np.allclose(result, image, atol=1e-4)
+
+
+def test_vibrance_boosts_weaker_colour_more_than_stronger_colour() -> None:
+    image = np.asarray(
+        [
+            [
+                [0.52, 0.46, 0.46],
+                [0.90, 0.12, 0.12],
+                [0.35, 0.35, 0.35],
+            ]
+        ],
+        dtype=np.float32,
+    )
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    result = apply_vibrance(
+        image,
+        weights,
+        amount=0.85,
+        protect_strong_colours=0.75,
+        protect_bright_areas=0.50,
+    )
+
+    before_chroma = np.sqrt(np.sum(rgb_to_oklab(image)[..., 1:] ** 2, axis=-1))
+    after_chroma = np.sqrt(np.sum(rgb_to_oklab(result)[..., 1:] ** 2, axis=-1))
+
+    weak_gain = float(after_chroma[0, 0] - before_chroma[0, 0])
+    strong_gain = float(after_chroma[0, 1] - before_chroma[0, 1])
+
+    assert weak_gain > strong_gain
+    assert np.allclose(result[0, 2], image[0, 2], atol=1e-5)
+
+
+def test_colour_temperature_warmth_and_tint_shift_in_expected_directions() -> None:
+    image = np.asarray([[[0.56, 0.48, 0.42]]], dtype=np.float32)
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+
+    warmer = apply_colour_temperature(
+        image,
+        weights,
+        warmth=0.60,
+        tint=0.0,
+        preserve_brightness=True,
+        protect_neutral_background=0.0,
+    )
+    cooler = apply_colour_temperature(
+        image,
+        weights,
+        warmth=-0.60,
+        tint=0.0,
+        preserve_brightness=True,
+        protect_neutral_background=0.0,
+    )
+    magenta = apply_colour_temperature(
+        image,
+        weights,
+        warmth=0.0,
+        tint=0.60,
+        preserve_brightness=True,
+        protect_neutral_background=0.0,
+    )
+    green = apply_colour_temperature(
+        image,
+        weights,
+        warmth=0.0,
+        tint=-0.60,
+        preserve_brightness=True,
+        protect_neutral_background=0.0,
+    )
+
+    base_lab = rgb_to_oklab(image)[0, 0]
+    warmer_lab = rgb_to_oklab(warmer)[0, 0]
+    cooler_lab = rgb_to_oklab(cooler)[0, 0]
+    magenta_lab = rgb_to_oklab(magenta)[0, 0]
+    green_lab = rgb_to_oklab(green)[0, 0]
+
+    assert warmer_lab[2] > base_lab[2]
+    assert cooler_lab[2] < base_lab[2]
+    assert magenta_lab[1] > base_lab[1]
+    assert green_lab[1] < base_lab[1]
+    assert np.allclose(compute_luminance(warmer), compute_luminance(image), atol=5e-3)
+
+
+@pytest.mark.parametrize(
+    ("rule_builder", "inside", "outside"),
+    [
+        (
+            lambda: _rule_tone_shaping(
+                rule_id="tone",
+                name="Tone Shaping",
+                target="combined",
+                regions=["lower-right"],
+                shadows=0.25,
+                midtones=0.35,
+                contrast=0.20,
+            ),
+            (42, 30),
+            (10, 10),
+        ),
+        (
+            lambda: _rule_local_contrast(
+                rule_id="contrast",
+                name="Local Contrast",
+                target="combined",
+                regions=["lower-right"],
+                amount=0.60,
+                structure_size="broad",
+            ),
+            (42, 30),
+            (10, 10),
+        ),
+        (
+            lambda: _rule_vibrance(
+                rule_id="vibrance",
+                name="Vibrance",
+                target="combined",
+                regions=["lower-right"],
+                amount=0.65,
+            ),
+            (42, 30),
+            (10, 10),
+        ),
+        (
+            lambda: _rule_colour_temperature(
+                rule_id="temperature",
+                name="Colour Temperature",
+                target="combined",
+                regions=["lower-right"],
+                warmth=0.55,
+                tint=0.18,
+            ),
+            (42, 30),
+            (10, 10),
+        ),
+    ],
+)
+def test_new_adjustments_respect_region_masks(
+    tmp_path: Path,
+    rule_builder: Any,
+    inside: tuple[int, int],
+    outside: tuple[int, int],
+) -> None:
+    project_dir = _create_project(tmp_path, [rule_builder()])
+    preview_path = tmp_path / "preview-region.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    output = load_canonical_image(preview_path).data
+    source = load_canonical_image(project_dir / "sources/source.png").data
+
+    inside_x, inside_y = inside
+    outside_x, outside_y = outside
+    inside_delta = np.abs(output[inside_y, inside_x] - source[inside_y, inside_x]).mean()
+    outside_delta = np.abs(output[outside_y, outside_x] - source[outside_y, outside_x]).mean()
+
+    assert inside_delta > 1e-3
+    assert outside_delta < 5e-4
+
+
+@pytest.mark.parametrize(
+    "rule_builder",
+    [
+        lambda: _rule_tone_shaping(
+            rule_id="tone",
+            name="Tone Shaping",
+            target="nebula",
+            shadows=0.25,
+            midtones=0.30,
+            contrast=0.15,
+        ),
+        lambda: _rule_local_contrast(
+            rule_id="contrast",
+            name="Local Contrast",
+            target="nebula",
+            amount=0.60,
+            structure_size="medium",
+        ),
+        lambda: _rule_vibrance(
+            rule_id="vibrance",
+            name="Vibrance",
+            target="nebula",
+            amount=0.65,
+        ),
+        lambda: _rule_colour_temperature(
+            rule_id="temperature",
+            name="Colour Temperature",
+            target="nebula",
+            warmth=0.60,
+            tint=0.10,
+        ),
+    ],
+)
+def test_new_adjustments_respect_semantic_targets(
+    tmp_path: Path,
+    rule_builder: Any,
+) -> None:
+    project_dir = tmp_path / "targeted"
+    project_dir.mkdir(parents=True)
+    _write_common_files(project_dir)
+    _write_star_nebula_source_image(project_dir / "sources/source.png")
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(_base_project_payload([rule_builder()]), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    preview_path = tmp_path / "preview-target.png"
+    render_preview(project_dir, preview_path, force=True)
+
+    output = load_canonical_image(preview_path).data
+    source = load_canonical_image(project_dir / "sources/source.png").data
+
+    nebula_delta = np.abs(output[30, 28] - source[30, 28]).mean()
+    star_delta = np.abs(output[10, 10] - source[10, 10]).mean()
+
+    assert nebula_delta > star_delta + 1e-3
 
 
 def test_two_rules_run_in_declaration_order(tmp_path: Path) -> None:
@@ -642,6 +1167,89 @@ def test_existing_single_rule_projects_remain_compatible(tmp_path: Path) -> None
 
     result = render_preview(project_dir, tmp_path / "legacy.png", force=True)
     assert result.applied_rule_ids == ["increase-nebula-blue"]
+
+
+def test_explicit_legacy_colour_amount_matches_legacy_default_rendering(tmp_path: Path) -> None:
+    project_implicit = _create_project(
+        tmp_path / "implicit",
+        [
+            _rule_colour_amount(
+                rule_id="legacy-blue",
+                name="Legacy Blue",
+                amount=2.0,
+            )
+        ],
+    )
+    project_explicit = _create_project(
+        tmp_path / "explicit",
+        [
+            _rule_colour_amount(
+                rule_id="legacy-blue",
+                name="Legacy Blue",
+                amount=2.0,
+                response_version="legacy",
+                faint_colour_sensitivity=0.0,
+                reveal_faint_colour=0.0,
+                highlight_protection=0.0,
+                extended_range=False,
+            )
+        ],
+    )
+
+    implicit_path = tmp_path / "implicit.png"
+    explicit_path = tmp_path / "explicit.png"
+    render_preview(project_implicit, implicit_path, force=True)
+    render_preview(project_explicit, explicit_path, force=True)
+
+    implicit = load_canonical_image(implicit_path).data
+    explicit = load_canonical_image(explicit_path).data
+    np.testing.assert_allclose(implicit, explicit, atol=1e-6)
+
+
+def test_enhanced_colour_amount_preview_is_stronger_than_legacy_at_same_amount(
+    tmp_path: Path,
+) -> None:
+    project_legacy = _create_project(
+        tmp_path / "legacy-strength",
+        [
+            _rule_colour_amount(
+                rule_id="blue-legacy",
+                name="Blue Legacy",
+                target="combined",
+                amount=2.0,
+                response_version="legacy",
+            )
+        ],
+    )
+    project_enhanced = _create_project(
+        tmp_path / "enhanced-strength",
+        [
+            _rule_colour_amount(
+                rule_id="blue-enhanced",
+                name="Blue Enhanced",
+                target="combined",
+                amount=2.0,
+                response_version="enhanced",
+                faint_colour_sensitivity=0.20,
+                highlight_protection=0.65,
+                colour_range=0.24,
+            )
+        ],
+    )
+
+    legacy_path = tmp_path / "legacy-strength.png"
+    enhanced_path = tmp_path / "enhanced-strength.png"
+    render_preview(project_legacy, legacy_path, force=True)
+    render_preview(project_enhanced, enhanced_path, force=True)
+
+    source = load_canonical_image(project_legacy / "sources/source.png").data
+    legacy = load_canonical_image(legacy_path).data
+    enhanced = load_canonical_image(enhanced_path).data
+
+    legacy_delta = float(np.abs(legacy[6:18, 6:18] - source[6:18, 6:18]).mean())
+    enhanced_delta = float(np.abs(enhanced[6:18, 6:18] - source[6:18, 6:18]).mean())
+
+    assert enhanced_delta > (legacy_delta * 1.10)
 
 
 def test_execution_trace_is_stable_and_ordered(tmp_path: Path) -> None:

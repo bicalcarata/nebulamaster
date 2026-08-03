@@ -11,13 +11,17 @@ from project_model import (
     ColourAmountTransform,
     ColourPoint,
     ColourSmoothingTransform,
+    ColourTemperatureTransform,
     DarkNebulaProcessingTransform,
     DeclarativeRule,
     FauxPaletteTransform,
     LevelsTransform,
+    LocalContrastTransform,
     ProjectBundle,
     SaturationTransform,
     ShiftColourPointTransform,
+    ToneShapingTransform,
+    VibranceTransform,
 )
 from pydantic import BaseModel, ConfigDict
 
@@ -26,14 +30,19 @@ from .selection import (
     apply_brightness_transform,
     apply_colour_amount,
     apply_colour_smoothing,
+    apply_colour_temperature,
     apply_dark_nebula_processing,
     apply_faux_palette,
     apply_levels_transform,
+    apply_local_contrast,
     apply_saturation_transform,
     apply_shift_colour_point,
+    apply_tone_shaping,
+    apply_vibrance,
     brightness_weight,
     colour_weight,
     compute_luminance,
+    faint_colour_weight,
     saturation_weight,
 )
 from .semantic import analyze_dark_dust, semantic_target_influence
@@ -85,8 +94,10 @@ def _selection_weights(
     bundle: ProjectBundle,
     rule: DeclarativeRule,
     selection_image: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    original_image: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
     colour_weights = np.ones(selection_image.shape[:2], dtype=np.float32)
+    target_rgb: np.ndarray | None = None
     if rule.match.colour_point is not None:
         colour_point = _resolve_colour_point(bundle, rule.match.colour_point)
         target_rgb = np.asarray(colour_point.value.channels, dtype=np.float32)
@@ -95,6 +106,22 @@ def _selection_weights(
             target_rgb,
             colour_range=rule.match.colour_range,
             softness=rule.match.softness,
+        )
+
+    faint_weights = np.zeros_like(colour_weights, dtype=np.float32)
+    if (
+        isinstance(rule.transform, ColourAmountTransform)
+        and rule.transform.faint_colour_sensitivity > 0.0
+        and target_rgb is not None
+    ):
+        faint_weights = faint_colour_weight(
+            original_image,
+            target_rgb,
+            rule.transform.channel,
+            rule.transform.faint_colour_sensitivity,
+            faint_range=rule.transform.faint_range,
+            structure_size=rule.transform.structure_size,
+            bright_colour_protection=rule.transform.bright_colour_protection,
         )
 
     brightness_weights = np.ones_like(colour_weights, dtype=np.float32)
@@ -127,6 +154,16 @@ def _selection_weights(
         rule.target,
         bundle.project.dark_dust,
     )
+    faint_reveal_weights = (
+        faint_weights
+        * brightness_weights
+        * saturation_weights
+        * region_weights
+        * target_weights
+    ).astype(
+        np.float32,
+        copy=False,
+    )
     combined = (
         colour_weights
         * brightness_weights
@@ -137,12 +174,21 @@ def _selection_weights(
         np.float32,
         copy=False,
     )
-    return colour_weights, brightness_weights, region_weights, target_weights, combined, region_ids
+    return (
+        colour_weights,
+        brightness_weights,
+        region_weights,
+        target_weights,
+        faint_reveal_weights,
+        combined,
+        region_ids,
+    )
 
 
 def _apply_transform(
     current_image: np.ndarray,
     weights: np.ndarray,
+    faint_weights: np.ndarray,
     rule: DeclarativeRule,
     bundle: ProjectBundle,
 ) -> np.ndarray:
@@ -154,6 +200,12 @@ def _apply_transform(
             channel=transform.channel,
             amount=transform.amount,
             preserve_luminance=transform.preserve_luminance,
+            response_version=transform.response_version,
+            extended_range=transform.extended_range,
+            highlight_protection=transform.highlight_protection,
+            reveal_faint_colour=transform.reveal_faint_colour,
+            reveal_mask=faint_weights,
+            structure_size=transform.structure_size,
         )
     if isinstance(transform, ShiftColourPointTransform):
         target = _resolve_colour_point(bundle, transform.target_colour_point)
@@ -178,6 +230,44 @@ def _apply_transform(
             mid=transform.mid,
             light=transform.light,
             brightest=transform.brightest,
+        )
+    if isinstance(transform, ToneShapingTransform):
+        return apply_tone_shaping(
+            current_image,
+            weights,
+            shadows=transform.shadows,
+            midtones=transform.midtones,
+            highlights=transform.highlights,
+            contrast=transform.contrast,
+            black_protection=transform.black_protection,
+            highlight_protection=transform.highlight_protection,
+        )
+    if isinstance(transform, LocalContrastTransform):
+        return apply_local_contrast(
+            current_image,
+            weights,
+            amount=transform.amount,
+            structure_size=transform.structure_size,
+            background_protection=transform.background_protection,
+            highlight_protection=transform.highlight_protection,
+            softness=transform.softness,
+        )
+    if isinstance(transform, VibranceTransform):
+        return apply_vibrance(
+            current_image,
+            weights,
+            amount=transform.amount,
+            protect_strong_colours=transform.protect_strong_colours,
+            protect_bright_areas=transform.protect_bright_areas,
+        )
+    if isinstance(transform, ColourTemperatureTransform):
+        return apply_colour_temperature(
+            current_image,
+            weights,
+            warmth=transform.warmth,
+            tint=transform.tint,
+            preserve_brightness=transform.preserve_brightness,
+            protect_neutral_background=transform.protect_neutral_background,
         )
     if isinstance(transform, ColourSmoothingTransform):
         return apply_colour_smoothing(
@@ -278,14 +368,22 @@ def execute_rule_stack(
             brightness_weights,
             region_weights,
             target_weights,
+            faint_weights,
             combined_weights,
             region_ids,
         ) = _selection_weights(
             bundle,
             rule,
             selection_image,
+            original_image,
         )
-        current_image = _apply_transform(current_image, combined_weights, rule, bundle)
+        current_image = _apply_transform(
+            current_image,
+            combined_weights,
+            faint_weights,
+            rule,
+            bundle,
+        )
         duration = perf_counter() - start_time
 
         if write_debug_masks_dir is not None:

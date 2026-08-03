@@ -195,6 +195,156 @@ def test_project_model_accepts_faux_palette_transform() -> None:
         assert all(value == 100.0 for value in transform.supported_colour_balance().values())
 
 
+def test_project_model_accepts_new_tone_and_colour_transforms() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "new-adjustments-demo", "name": "New Adjustments Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [
+                {"id": "combined", "name": "Combined Image"},
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "stars", "name": "Stars"},
+                {"id": "dark_dust", "name": "Dark Dust"},
+                {"id": "background", "name": "Background"},
+            ],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "tone",
+                    "name": "Tone Shaping",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "tone_shaping",
+                        "shadows": 0.2,
+                        "midtones": 0.3,
+                        "highlights": -0.1,
+                        "contrast": 0.25,
+                        "black_protection": 0.8,
+                        "highlight_protection": 0.65,
+                    },
+                },
+                {
+                    "id": "contrast",
+                    "name": "Local Contrast",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "local_contrast",
+                        "amount": 0.35,
+                        "structure_size": "broad",
+                        "background_protection": 0.75,
+                        "highlight_protection": 0.7,
+                        "softness": 0.45,
+                    },
+                },
+                {
+                    "id": "vibrance",
+                    "name": "Vibrance",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "vibrance",
+                        "amount": 0.4,
+                        "protect_strong_colours": 0.85,
+                        "protect_bright_areas": 0.55,
+                    },
+                },
+                {
+                    "id": "temperature",
+                    "name": "Colour Temperature",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "combined",
+                    "match": {"softness": 0.5},
+                    "transform": {
+                        "type": "colour_temperature",
+                        "warmth": 0.18,
+                        "tint": 0.12,
+                        "preserve_brightness": True,
+                        "protect_neutral_background": 0.55,
+                    },
+                },
+            ],
+        }
+    )
+
+    assert project.rules[0].transform.type == "tone_shaping"
+    assert project.rules[1].transform.type == "local_contrast"
+    assert project.rules[2].transform.type == "vibrance"
+    assert project.rules[3].transform.type == "colour_temperature"
+
+
+def test_project_model_accepts_enhanced_colour_amount_controls() -> None:
+    project = ProjectFile.model_validate(
+        {
+            "schema_version": 1,
+            "project": {"id": "enhanced-red-demo", "name": "Enhanced Red Demo"},
+            "sources": [{"id": "source-01", "path": "sources/source.png", "enabled": True}],
+            "semantic_channels": [
+                {"id": "combined", "name": "Combined Image"},
+                {"id": "nebula", "name": "Nebula"},
+                {"id": "stars", "name": "Stars"},
+                {"id": "dark_dust", "name": "Dark Dust"},
+                {"id": "background", "name": "Background"},
+            ],
+            "palettes": [],
+            "regions": [],
+            "render_profiles": [],
+            "plugins": {"path": "plugins/lock.yaml"},
+            "rules": [
+                {
+                    "id": "reveal-faint-red",
+                    "name": "Reveal Faint Red",
+                    "enabled": True,
+                    "selection_source": "current",
+                    "target": "nebula",
+                    "match": {
+                        "colour_point": "nebula-red",
+                        "colour_range": 0.28,
+                        "softness": 0.45,
+                    },
+                    "transform": {
+                        "type": "colour_amount",
+                        "channel": "red",
+                        "amount": 1.55,
+                        "preserve_luminance": True,
+                        "response_version": "enhanced",
+                        "faint_colour_sensitivity": 0.40,
+                        "reveal_faint_colour": 0.35,
+                        "faint_range": 0.60,
+                        "structure_size": "broad",
+                        "bright_colour_protection": 0.75,
+                        "highlight_protection": 0.70,
+                        "extended_range": True,
+                    },
+                }
+            ],
+        }
+    )
+
+    transform = project.rules[0].transform
+    assert transform.type == "colour_amount"
+    assert transform.response_version == "enhanced"
+    assert transform.faint_colour_sensitivity == 0.40
+    assert transform.reveal_faint_colour == 0.35
+    assert transform.faint_range == 0.60
+    assert transform.structure_size == "broad"
+    assert transform.bright_colour_protection == 0.75
+    assert transform.highlight_protection == 0.70
+    assert transform.extended_range is True
+
+
 def test_faux_palette_transform_accepts_supported_colour_balance_controls() -> None:
     project = ProjectFile.model_validate(
         {
