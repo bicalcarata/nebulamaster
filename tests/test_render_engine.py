@@ -6,8 +6,8 @@ from typing import Any
 
 import numpy as np
 import yaml
-from engine import EXIT_INPUT_ERROR, EXIT_VALIDATION_SUCCESS
-from engine.render import apply_crop, plan_render, render_output
+from engine import EXIT_INPUT_ERROR, EXIT_VALIDATION_SUCCESS, load_valid_project_bundle
+from engine.render import apply_crop, execute_project_image, plan_render, render_output
 from engine.selection import apply_levels_transform
 from image_io import CanonicalImage, load_canonical_image, resize_exact
 from PIL import Image
@@ -541,6 +541,188 @@ def test_crop_changes_output(tmp_path: Path) -> None:
     )
 
     assert full_result.output_sha256 != cropped_result.output_sha256
+
+
+def test_profile_crop_changes_output_dimensions_and_manifest_source(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        profile_payloads={
+            "screen-preview": {
+                "id": "screen-preview",
+                "name": "Screen Preview",
+                "profile": {
+                    "type": "screen",
+                    "format": "png",
+                    "color_space": "srgb",
+                    "bit_depth": 8,
+                    "width_px": 240,
+                    "interpolation": "nearest",
+                    "crop": {
+                        "enabled": True,
+                        "x": 0.25,
+                        "y": 0.0,
+                        "width": 0.5,
+                        "height": 1.0,
+                        "aspect_ratio": "custom",
+                        "lock_aspect_ratio": False,
+                    },
+                },
+            }
+        },
+    )
+
+    result = render_output(
+        project_dir,
+        profile_id="screen-preview",
+        output_path=tmp_path / "cropped-profile.png",
+        force=True,
+    )
+
+    assert result.output_dimensions.model_dump() == {"width": 240, "height": 320}
+    assert result.cropped_source_dimensions.model_dump() == {"width": 60, "height": 80}
+    manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["crop_source"] == "profile"
+    assert manifest["crop_declaration"]["enabled"] is True
+
+
+def test_legacy_project_crop_remains_supported_for_render_output(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        profile_payloads={
+            "screen-preview": {
+                "id": "screen-preview",
+                "name": "Screen Preview",
+                "profile": {
+                    "type": "screen",
+                    "format": "png",
+                    "color_space": "srgb",
+                    "bit_depth": 8,
+                    "width_px": 240,
+                    "interpolation": "nearest",
+                },
+            }
+        },
+        crop={"x": 0.25, "y": 0.0, "width": 0.5, "height": 1.0},
+    )
+
+    result = render_output(
+        project_dir,
+        profile_id="screen-preview",
+        output_path=tmp_path / "legacy-crop.png",
+        force=True,
+    )
+
+    assert result.output_dimensions.model_dump() == {"width": 240, "height": 320}
+    manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["crop_source"] == "legacy_project"
+
+
+def test_render_cli_crop_override_uses_shared_renderer_path(tmp_path: Path) -> None:
+    project_dir = _create_project(
+        tmp_path,
+        profile_payloads={
+            "screen-preview": {
+                "id": "screen-preview",
+                "name": "Screen Preview",
+                "profile": {
+                    "type": "screen",
+                    "format": "png",
+                    "color_space": "srgb",
+                    "bit_depth": 8,
+                    "width_px": 240,
+                    "interpolation": "nearest",
+                },
+            }
+        },
+    )
+    output_path = tmp_path / "cli-crop.png"
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "render",
+            str(project_dir),
+            "--profile",
+            "screen-preview",
+            "--output",
+            str(output_path),
+            "--crop",
+            "0.25,0.0,0.5,1.0",
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == EXIT_VALIDATION_SUCCESS
+    payload = json.loads(result.stdout)
+    assert payload["output_dimensions"] == {"width": 240, "height": 320}
+    manifest = json.loads(Path(payload["manifest_path"]).read_text(encoding="utf-8"))
+    assert manifest["crop_source"] == "override"
+
+
+def test_render_crops_after_adjustments_and_before_resize(tmp_path: Path) -> None:
+    crop_payload = {
+        "enabled": True,
+        "x": 0.25,
+        "y": 0.10,
+        "width": 0.50,
+        "height": 0.60,
+        "aspect_ratio": "custom",
+        "lock_aspect_ratio": False,
+    }
+    project_dir = _create_project(
+        tmp_path,
+        profile_payloads={
+            "screen-preview": {
+                "id": "screen-preview",
+                "name": "Screen Preview",
+                "profile": {
+                    "type": "screen",
+                    "format": "png",
+                    "color_space": "srgb",
+                    "bit_depth": 8,
+                    "width_px": 240,
+                    "height_px": 160,
+                    "interpolation": "nearest",
+                    "crop": crop_payload,
+                },
+            }
+        },
+    )
+
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert report.valid is True
+    assert bundle is not None
+    _, _, canonical, execution, _ = execute_project_image(bundle)
+    mastered = CanonicalImage(
+        data=execution.image,
+        width=canonical.width,
+        height=canonical.height,
+    )
+    crop = CropDeclaration.model_validate(crop_payload)
+    cropped_then_resized = resize_exact(
+        apply_crop(mastered, crop),
+        240,
+        160,
+        method="nearest",
+    )
+    resized_full = resize_exact(mastered, 240, 160, method="nearest")
+    wrong_order = apply_crop(resized_full, crop)
+
+    result = render_output(
+        project_dir,
+        profile_id="screen-preview",
+        output_path=tmp_path / "ordered-crop.png",
+        force=True,
+    )
+    rendered = load_canonical_image(Path(result.output_path))
+
+    np.testing.assert_allclose(rendered.data, cropped_then_resized.data, atol=1e-6)
+    assert (
+        wrong_order.width != rendered.width
+        or wrong_order.height != rendered.height
+        or not np.allclose(wrong_order.data, rendered.data)
+    )
 
 
 def test_preview_and_render_share_rule_execution_behaviour(tmp_path: Path) -> None:

@@ -19,16 +19,17 @@ source image is never modified.
 - Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
 - Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
-## What’s New In 0.5.2
+## What’s New In 0.5.3
 
-`0.5.2` is a stability and workflow release that tightens the ordered-adjustment editor after the
-larger `0.5.x` feature work.
+`0.5.3` builds directly on the `0.5.2` workflow release and adds a proper non-destructive output
+crop pipeline for screen and print export, alongside a small set of export and crop-editor fixes.
 
-- Adjustment-stack editing is now more reliable when adding, deleting, duplicating or reordering adjustments, so the left-hand list and the right-hand inspector stay in sync.
-- Colour-reduction behaviour is now safer for targeted colour adjustments, which avoids aggressive channel flips when reducing selected red-family tones.
-- New-project and existing-project adjustment editing now behave more predictably when the user is building up a stack from scratch.
-- Faux palettes, dark-dust work, regions, exports and semantic overlays continue to run through the same shared renderer and declarative project model introduced in `0.5.1`.
-- The desktop workflow remains centred on ordered non-destructive adjustments, project reopening, semantic targeting, and screen/print export from the same render engine.
+- Screen and print export now support non-destructive output framing, so one mastered project can produce full-frame, square, portrait, social and print crops without changing the source image or the ordered adjustment stack.
+- Crop now lives in the output pipeline where it belongs: the full image is mastered first, the selected output crop is applied next, and only then is the cropped result resized or upscaled for export.
+- The crop editor now behaves like a real framing tool, with a transparent crop window, outside dimming, draggable edges and corners, fixed ratio presets, and a cropped-output preview mode.
+- Locked crop aspect ratio is now preserved at export time, which prevents stale width and height pairs from stretching the final cropped render.
+- Existing full-frame projects remain valid, and legacy root-level crop values continue to load safely while newer output-profile crop settings take precedence.
+- The earlier `0.5.2` list/inspector reliability fixes remain in place, so adjustment editing, palette tuning, semantic targeting, regions, overlays and export still run through the same shared renderer and declarative project model.
 
 ## Why Nebula Master?
 
@@ -87,7 +88,7 @@ That means you can do things like:
 - push a colour treatment into one visible cloud
 - soften or brighten only the selected area of a target
 
-## The 0.5.2 Desktop Workflow
+## The 0.5.3 Desktop Workflow
 
 ### Ordered adjustments and palette tuning
 
@@ -128,7 +129,39 @@ supports physical dimensions, units, target DPI and preserve-pixels upscaling.
 
 `Preserve pixels` enlarges the output grid without inventing fine astronomical detail.
 
+Screen and print export also support non-destructive output framing. Crop is stored with the output
+profile, applied after the ordered mastering stack, and then resized to the final screen or print
+dimensions. That means one project can produce a full-frame render, a square crop, and a print crop
+without changing the source image or the adjustment stack.
+
 ![Print export dialog](docs/images/readme/export-print-dialog-0-5-0.png)
+
+### Crop as output framing, not an adjustment
+
+Crop is now treated as output framing rather than part of the mastering stack.
+
+That means you can:
+
+- keep the adjustment chain working against the full mastered image
+- choose different crops for different exports
+- frame a square screen output and a 4:5 print output from the same project
+- resize or upscale only the cropped content instead of enlarging pixels that will be discarded
+
+The crop editor supports:
+
+- `Off / Full Frame`
+- `Original`
+- `Custom`
+- `1:1`
+- `4:5`
+- `5:4`
+- `3:2`
+- `2:3`
+- `16:9`
+- `9:16`
+
+The crop overlay dims the outside area, keeps the active crop transparent, supports drag-resize from
+edges and corners, and can preview either the full mastered frame or the cropped result.
 
 ### Expanded adjustment library
 
@@ -295,6 +328,7 @@ The current desktop release supports:
 - `Create Adjustment from Selection`
 - palette-specific colour-balance controls
 - Dark Nebula Processing
+- non-destructive crop editing for export profiles
 - screen export
 - print export
 - macOS and Windows packaged desktop builds
@@ -315,6 +349,9 @@ nebula explain
 
 The desktop application does not have its own private rendering path. Preview, export and CLI
 rendering all go through the same engine.
+
+`nebula render` also supports explicit normalized crop coordinates for output rendering, and the
+desktop and CLI both use the same shared crop implementation.
 
 ## Architecture
 
@@ -381,9 +418,9 @@ The repository includes GitHub Actions for:
 
 For a normal versioned release:
 
-1. Bump the repo version, for example to `0.5.2`.
+1. Bump the repo version, for example to `0.5.3`.
 2. Push the commit to GitHub.
-3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.2`.
+3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.3`.
 4. Let `Package Desktop` build the macOS and Windows artifacts for that tag.
 5. Publish the immutable release once the artifacts are attached.
 

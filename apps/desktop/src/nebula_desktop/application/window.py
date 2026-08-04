@@ -1419,7 +1419,9 @@ class MainWindow(QMainWindow):
     def _export_for_screen(self) -> None:
         if not self._ensure_project_open():
             return
+        crop = self.view_model.legacy_output_crop()
         native_dimensions = self.view_model.native_render_dimensions()
+        cropped_dimensions = self.view_model.native_render_dimensions(crop=crop)
         if native_dimensions is None:
             QMessageBox.critical(
                 self,
@@ -1430,6 +1432,10 @@ class MainWindow(QMainWindow):
         dialog = ScreenExportDialog(
             native_width=native_dimensions[0],
             native_height=native_dimensions[1],
+            default_width_px=cropped_dimensions[0] if cropped_dimensions is not None else None,
+            default_height_px=cropped_dimensions[1] if cropped_dimensions is not None else None,
+            preview_image=self.view_model.output_crop_preview_image(),
+            initial_crop=crop,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1445,7 +1451,9 @@ class MainWindow(QMainWindow):
         profile = self.view_model.build_screen_export_profile(
             output_format=options.output_format,
             width_px=options.width_px,
+            height_px=options.height_px,
             interpolation=options.interpolation,
+            crop=options.crop,
         )
         self._run_export(
             output_path=destination,
@@ -1457,7 +1465,13 @@ class MainWindow(QMainWindow):
     def _export_for_print(self) -> None:
         if not self._ensure_project_open():
             return
-        default_dimensions = self.view_model.default_print_dimensions(units="cm", ppi=300)
+        crop = self.view_model.legacy_output_crop()
+        native_dimensions = self.view_model.native_render_dimensions()
+        default_dimensions = self.view_model.default_print_dimensions(
+            units="cm",
+            ppi=300,
+            crop=crop,
+        )
         if default_dimensions is None:
             QMessageBox.critical(
                 self,
@@ -1465,11 +1479,22 @@ class MainWindow(QMainWindow):
                 "The print dimensions could not be derived for this project.",
             )
             return
+        if native_dimensions is None:
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                "The source dimensions could not be derived for this project.",
+            )
+            return
         dialog = PrintExportDialog(
             default_width=default_dimensions[0],
             default_height=default_dimensions[1],
             default_units="cm",
             default_ppi=300,
+            native_width=native_dimensions[0],
+            native_height=native_dimensions[1],
+            preview_image=self.view_model.output_crop_preview_image(),
+            initial_crop=crop,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1489,6 +1514,7 @@ class MainWindow(QMainWindow):
             units=options.units,
             ppi=options.ppi,
             interpolation=options.interpolation,
+            crop=options.crop,
         )
         self._run_export(
             output_path=destination,

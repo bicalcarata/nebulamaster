@@ -92,6 +92,30 @@ def test_selection_source_source_replacement_render_profile_and_plugin_lock_chan
     assert "plugin_lock.changed" in modified_codes
 
 
+def test_render_profile_crop_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    screen_profile = project_b / "render_profiles" / "screen.yaml"
+    payload = _read_yaml(screen_profile)
+    profile = payload["profile"]
+    assert isinstance(profile, dict)
+    profile["crop"] = {
+        "enabled": True,
+        "x": 0.10,
+        "y": 0.05,
+        "width": 0.80,
+        "height": 0.64,
+        "aspect_ratio": "4:5",
+        "lock_aspect_ratio": True,
+    }
+    _write_yaml(screen_profile, payload)
+
+    result = diff_projects(project_a, project_b)
+
+    assert [change.code for change in result.modified_items] == ["render_profile.crop_added"]
+    assert result.modified_items[0].human_summary == "Added 4:5 crop to Screen Preview output."
+
+
 def test_rule_target_change_is_reported_in_plain_language(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")

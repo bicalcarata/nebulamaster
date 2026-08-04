@@ -10,7 +10,7 @@ from project_model import ProjectBundle
 from pydantic import BaseModel, ConfigDict, Field
 
 from .executor import RuleExecutionTrace
-from .render import apply_crop, execute_project_image
+from .render import execute_project_image
 from .validation import ValidationRuntimeError, load_valid_project_bundle
 
 PREVIEW_MAX_EDGE = 1024
@@ -68,7 +68,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.5.2"
+        return "0.5.3"
 
 
 def _ensure_output_path(output_path: Path, force: bool) -> Path:
@@ -103,8 +103,7 @@ def render_preview_image(
         width=canonical.width,
         height=canonical.height,
     )
-    cropped = apply_crop(mastered, bundle.project.crop)
-    preview = resize_to_max_edge(cropped, max_edge)
+    preview = resize_to_max_edge(mastered, max_edge)
     timestamp = datetime.now(tz=UTC)
     source_sha256 = sha256_file(source_path) if include_provenance else ""
     project_sha256 = sha256_file(bundle.project_file) if include_provenance else ""

@@ -24,6 +24,7 @@ from engine import (
     write_aligned_bundle,
 )
 from engine.preview import PreviewInputError, PreviewRenderError, render_preview
+from project_model import CropDeclaration
 from versioning import (
     EXIT_GIT_ERROR,
     EXIT_SAFETY_REFUSAL,
@@ -60,6 +61,11 @@ DEBUG_MASKS_OPTION = typer.Option(
     "--write-debug-masks",
     help="Write debug mask artefacts to a directory.",
     resolve_path=True,
+)
+CROP_OPTION = typer.Option(
+    None,
+    "--crop",
+    help="Normalized crop rectangle as x,y,width,height applied after mastering and before resize.",
 )
 YES_OPTION = typer.Option(False, "--yes", help="Confirm the operation without prompting.")
 INIT_OPTION = typer.Option(
@@ -167,6 +173,32 @@ def _semantic_summary_since_last_version(project_path: Path) -> list[str]:
         previous = materialize_project_version(project_path, head_commit, temp_dir / "previous")
         result = diff_projects(previous, project_path)
     return [entry.summary for entry in result.explanations]
+
+
+def _parse_crop_option(value: str | None) -> CropDeclaration | None:
+    if value is None:
+        return None
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise typer.BadParameter("--crop must be formatted as x,y,width,height")
+    try:
+        x, y, width, height = (float(part) for part in parts)
+    except ValueError as exc:
+        raise typer.BadParameter("--crop values must be numeric") from exc
+    try:
+        return CropDeclaration.model_validate(
+            {
+                "enabled": True,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "aspect_ratio": "custom",
+                "lock_aspect_ratio": False,
+            }
+        )
+    except Exception as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command("validate")
@@ -371,6 +403,7 @@ def render(
     force: bool = FORCE_OPTION,
     dry_run: bool = DRY_RUN_OPTION,
     write_debug_masks: Path | None = DEBUG_MASKS_OPTION,
+    crop: str | None = CROP_OPTION,
     json_output: bool = JSON_OPTION,
 ) -> None:
     try:
@@ -408,6 +441,7 @@ def render(
         raise typer.Exit(report.exit_code)
 
     try:
+        crop_override = _parse_crop_option(crop)
         result = render_output(
             project_path,
             profile_id=profile_id,
@@ -415,6 +449,7 @@ def render(
             force=force,
             dry_run=dry_run,
             write_debug_masks_dir=write_debug_masks,
+            crop_override=crop_override,
         )
     except RenderInputError as exc:
         payload = {

@@ -12,6 +12,11 @@ from engine.render import render_bundle_output
 from engine.semantic import analyze_dark_dust
 from image_io import CanonicalImage, inspect_image, load_canonical_image
 from nebula_desktop import __version__ as desktop_version
+from nebula_desktop.application.export_dialogs import (
+    CropPreviewWidget,
+    PrintExportDialog,
+    ScreenExportDialog,
+)
 from nebula_desktop.application.project_scaffold import scaffold_project_from_image
 from nebula_desktop.application.window import (
     _MAX_RECENT_PROJECTS,
@@ -34,13 +39,14 @@ from project_io import read_yaml_mapping
 from project_model import (
     BrightnessTransform,
     ColourAmountTransform,
+    CropDeclaration,
     FauxPaletteTransform,
     LevelsTransform,
     LocalContrastTransform,
     SaturationTransform,
     ShiftColourPointTransform,
 )
-from PySide6.QtCore import QPointF, QSettings, Qt
+from PySide6.QtCore import QPointF, QSettings, QSignalBlocker, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 
@@ -2747,6 +2753,153 @@ def test_export_defaults_and_profiles_reflect_native_source_dimensions(tmp_path:
     assert print_profile.ppi == 300
     assert print_profile.interpolation == "nearest"
     assert print_profile.bit_depth == 16
+
+
+def test_export_defaults_can_follow_a_stored_output_crop(tmp_path: Path) -> None:
+    project_dir = _copy_example_project(tmp_path)
+    project_path = project_dir / "project.yaml"
+    payload = read_yaml_mapping(project_path)
+    payload["crop"] = {
+        "x": 0.10,
+        "y": 0.10,
+        "width": 0.60,
+        "height": 0.50,
+        "aspect_ratio": "custom",
+        "lock_aspect_ratio": False,
+    }
+    project_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    view_model = ProjectEditorViewModel()
+    assert view_model.open_project(project_dir) is True
+
+    full_dimensions = view_model.native_render_dimensions()
+    crop = view_model.legacy_output_crop()
+    cropped_dimensions = view_model.native_render_dimensions(crop=crop)
+    assert full_dimensions is not None
+    assert cropped_dimensions is not None
+    assert cropped_dimensions[0] < full_dimensions[0]
+    assert cropped_dimensions[1] < full_dimensions[1]
+
+    default_print = view_model.default_print_dimensions(units="cm", ppi=300, crop=crop)
+    assert default_print is not None
+    assert default_print[0] > 0.0
+    assert default_print[1] > 0.0
+
+    screen_profile = view_model.build_screen_export_profile(
+        output_format="png",
+        width_px=cropped_dimensions[0],
+        height_px=cropped_dimensions[1],
+        interpolation="nearest",
+        crop=crop,
+    )
+    assert screen_profile.crop is not None
+    assert screen_profile.crop.enabled is True
+    assert screen_profile.width_px == cropped_dimensions[0]
+    assert screen_profile.height_px == cropped_dimensions[1]
+
+
+def test_crop_preview_draws_only_resize_handles(qtbot: Any) -> None:
+    widget = CropPreviewWidget()
+    qtbot.addWidget(widget)
+    widget.resize(320, 240)
+    widget.set_image(
+        CanonicalImage(
+            data=np.zeros((32, 48, 3), dtype=np.float32),
+            width=48,
+            height=32,
+        )
+    )
+    widget.set_crop(
+        CropDeclaration.model_validate(
+            {
+                "enabled": True,
+                "x": 0.2,
+                "y": 0.2,
+                "width": 0.5,
+                "height": 0.5,
+                "aspect_ratio": "custom",
+                "lock_aspect_ratio": False,
+            }
+        ),
+        locked_aspect_ratio=None,
+    )
+
+    visible_handles = widget._resize_handle_rects()
+    assert set(visible_handles.keys()) == {
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+        "left",
+        "right",
+        "top",
+        "bottom",
+    }
+    assert "move" not in visible_handles
+
+
+def test_screen_export_options_preserve_crop_aspect_when_locked(qtbot: Any) -> None:
+    crop = CropDeclaration.model_validate(
+        {
+            "enabled": True,
+            "x": 0.10,
+            "y": 0.10,
+            "width": 0.40,
+            "height": 0.80,
+            "aspect_ratio": "custom",
+            "lock_aspect_ratio": False,
+        }
+    )
+    dialog = ScreenExportDialog(
+        native_width=4000,
+        native_height=3000,
+        preview_image=None,
+        initial_crop=crop,
+    )
+    qtbot.addWidget(dialog)
+    dialog.lock_aspect_checkbox.setChecked(True)
+    with QSignalBlocker(dialog.width_input), QSignalBlocker(dialog.height_input):
+        dialog.width_input.setValue(2000)
+        dialog.height_input.setValue(4245)
+
+    options = dialog.selected_options()
+
+    assert options.width_px == 2000
+    assert options.height_px == 4000
+
+
+def test_print_export_options_preserve_crop_aspect_when_locked(qtbot: Any) -> None:
+    crop = CropDeclaration.model_validate(
+        {
+            "enabled": True,
+            "x": 0.10,
+            "y": 0.10,
+            "width": 0.40,
+            "height": 0.80,
+            "aspect_ratio": "custom",
+            "lock_aspect_ratio": False,
+        }
+    )
+    dialog = PrintExportDialog(
+        default_width=20.0,
+        default_height=10.0,
+        default_units="cm",
+        default_ppi=300,
+        native_width=4000,
+        native_height=3000,
+        preview_image=None,
+        initial_crop=crop,
+    )
+    qtbot.addWidget(dialog)
+    dialog.lock_aspect_checkbox.setChecked(True)
+    with QSignalBlocker(dialog.width_input), QSignalBlocker(dialog.height_input):
+        dialog.width_input.setValue(20.0)
+        dialog.height_input.setValue(42.45)
+
+    options = dialog.selected_options()
+
+    assert options.width == 20.0
+    assert options.height == 40.0
 
 
 def test_changing_colour_adjustment_amount_updates_preview_image(

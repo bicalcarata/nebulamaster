@@ -175,6 +175,42 @@ def _approx_equal(a: float, b: float, *, epsilon: float = 1e-6) -> bool:
     return abs(a - b) <= epsilon
 
 
+def _crop_enabled(profile: Any) -> bool:
+    crop = getattr(profile.profile, "crop", None)
+    return bool(crop is not None and crop.enabled and not crop.is_full_frame())
+
+
+def _crop_label(profile: Any) -> str:
+    crop = getattr(profile.profile, "crop", None)
+    if crop is None or not crop.enabled or crop.is_full_frame():
+        return "Full Frame"
+    aspect_ratio = crop.aspect_ratio or "custom"
+    return "Original" if aspect_ratio == "original" else str(aspect_ratio)
+
+
+def _crop_payload(profile: Any) -> dict[str, Any] | None:
+    crop = getattr(profile.profile, "crop", None)
+    if crop is None or not crop.enabled or crop.is_full_frame():
+        return None
+    return cast(dict[str, Any], crop.model_dump(mode="json"))
+
+
+def _render_profile_dimensions(profile: Any) -> str | None:
+    declaration = profile.profile
+    if hasattr(declaration, "width_px") or hasattr(declaration, "height_px"):
+        width = getattr(declaration, "width_px", None)
+        height = getattr(declaration, "height_px", None)
+        if width is not None and height is not None:
+            return f"{width} x {height}"
+    if hasattr(declaration, "width") and hasattr(declaration, "height"):
+        width = getattr(declaration, "width", None)
+        height = getattr(declaration, "height", None)
+        units = getattr(declaration, "units", None)
+        if width is not None and height is not None and units is not None:
+            return f"{width:g} x {height:g} {units}"
+    return None
+
+
 def _dominant_colour_name(channels: tuple[float, float, float]) -> str:
     red, green, blue = channels
     saturation = max(channels) - min(channels)
@@ -1208,14 +1244,54 @@ def _compare_render_profiles(
         profile_a = profiles_a[profile_id]
         profile_b = profiles_b[profile_id]
         if profile_a.model_dump(mode="json") != profile_b.model_dump(mode="json"):
-            width_a = profile_a.profile.bit_depth
-            width_b = profile_b.profile.bit_depth
+            bit_depth_a = profile_a.profile.bit_depth
+            bit_depth_b = profile_b.profile.bit_depth
             summary = f"{profile_b.name} output settings changed."
-            if width_a != width_b:
-                summary = f"{profile_b.name} bit depth changed from {width_a} to {width_b}."
+            code = "render_profile.changed"
+            technical_path = f"render_profiles.{profile_id}"
+            if bit_depth_a != bit_depth_b:
+                summary = (
+                    f"{profile_b.name} bit depth changed from {bit_depth_a} to {bit_depth_b}."
+                )
+            else:
+                crop_a = _crop_payload(profile_a)
+                crop_b = _crop_payload(profile_b)
+                if crop_a is None and crop_b is not None:
+                    summary = f"Added {_crop_label(profile_b)} crop to {profile_b.name} output."
+                    code = "render_profile.crop_added"
+                elif crop_a is not None and crop_b is None:
+                    summary = f"Disabled crop for {profile_b.name} output."
+                    code = "render_profile.crop_disabled"
+                elif crop_a != crop_b:
+                    summary = f"Changed {profile_b.name} crop framing."
+                    code = "render_profile.crop_changed"
+                    if (
+                        crop_a is not None
+                        and crop_b is not None
+                        and crop_a["width"] == crop_b["width"]
+                        and crop_a["height"] == crop_b["height"]
+                        and (
+                            crop_a["x"] != crop_b["x"]
+                            or crop_a["y"] != crop_b["y"]
+                        )
+                    ):
+                        summary = f"Changed {profile_b.name} crop position."
+                else:
+                    dimensions_a = _render_profile_dimensions(profile_a)
+                    dimensions_b = _render_profile_dimensions(profile_b)
+                    if (
+                        dimensions_a is not None
+                        and dimensions_b is not None
+                        and dimensions_a != dimensions_b
+                    ):
+                        summary = (
+                            f"Changed {profile_b.name} output dimensions from "
+                            f"{dimensions_a} to {dimensions_b}."
+                        )
+                        code = "render_profile.dimensions_changed"
             modified.append(
                 _change(
-                    "render_profile.changed",
+                    code,
                     "render_profile",
                     entity_id=profile_id,
                     entity_name=profile_b.name,
@@ -1223,7 +1299,7 @@ def _compare_render_profiles(
                     new_value=profile_b.model_dump(mode="json"),
                     significance=["visual", "structural"],
                     human_summary=summary,
-                    technical_path=f"render_profiles.{profile_id}",
+                    technical_path=technical_path,
                 )
             )
     return added, removed, modified

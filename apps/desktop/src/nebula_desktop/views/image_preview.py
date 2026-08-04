@@ -291,6 +291,31 @@ class ImagePreviewWidget(QWidget):
         image_y = point[1] * height_denominator
         return QPointF(rect.left() + image_x * scale, rect.top() + image_y * scale)
 
+    def map_widget_to_frame_normalized(self, position: QPointF) -> tuple[float, float] | None:
+        rect, scale = self._target_rect()
+        _ = scale
+        if self._image is None or rect is None or rect.width() <= 0.0 or rect.height() <= 0.0:
+            return None
+        if not rect.contains(position):
+            return None
+        x = (position.x() - rect.left()) / rect.width()
+        y = (position.y() - rect.top()) / rect.height()
+        return max(0.0, min(1.0, x)), max(0.0, min(1.0, y))
+
+    def map_frame_normalized_to_widget(self, point: tuple[float, float]) -> QPointF | None:
+        rect, scale = self._target_rect()
+        _ = scale
+        if self._image is None or rect is None:
+            return None
+        return QPointF(
+            rect.left() + max(0.0, min(1.0, point[0])) * rect.width(),
+            rect.top() + max(0.0, min(1.0, point[1])) * rect.height(),
+        )
+
+    def image_target_rect(self) -> QRectF | None:
+        rect, _scale = self._target_rect()
+        return rect
+
     def _target_rect(self) -> tuple[QRectF | None, float]:
         if self._pixmap is None or self._image is None:
             return None, 0.0

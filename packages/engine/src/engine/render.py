@@ -115,7 +115,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.5.2"
+        return "0.5.3"
 
 
 def _enabled_sources(bundle: ProjectBundle) -> list[SourceImage]:
@@ -139,7 +139,35 @@ def _resolve_profile(bundle: ProjectBundle, profile_id: str) -> RenderProfileDec
     return render_profile.profile
 
 
+def _full_frame_crop() -> CropDeclaration:
+    return CropDeclaration.model_validate(
+        {
+            "enabled": False,
+            "x": 0.0,
+            "y": 0.0,
+            "width": 1.0,
+            "height": 1.0,
+            "aspect_ratio": "original",
+            "lock_aspect_ratio": True,
+        }
+    )
+
+
+def resolve_output_crop(
+    profile: RenderProfileDeclaration,
+    *,
+    legacy_project_crop: CropDeclaration | None = None,
+) -> CropDeclaration:
+    if profile.crop is not None:
+        return profile.crop
+    if legacy_project_crop is not None and legacy_project_crop.enabled:
+        return legacy_project_crop
+    return _full_frame_crop()
+
+
 def calculate_crop_box(crop: CropDeclaration, width: int, height: int) -> tuple[int, int, int, int]:
+    if not crop.enabled:
+        return 0, 0, width, height
     left = int(round(crop.x * width))
     top = int(round(crop.y * height))
     right = int(round((crop.x + crop.width) * width))
@@ -150,6 +178,8 @@ def calculate_crop_box(crop: CropDeclaration, width: int, height: int) -> tuple[
 
 
 def apply_crop(image: CanonicalImage, crop: CropDeclaration) -> CanonicalImage:
+    if not crop.enabled:
+        return image
     left, top, right, bottom = calculate_crop_box(crop, image.width, image.height)
     return crop_image(image, left=left, top=top, right=right, bottom=bottom)
 
@@ -368,6 +398,7 @@ def render_output(
     force: bool = False,
     dry_run: bool = False,
     write_debug_masks_dir: Path | None = None,
+    crop_override: CropDeclaration | None = None,
 ) -> RenderResult:
     try:
         bundle, report = load_valid_project_bundle(project_path)
@@ -386,6 +417,7 @@ def render_output(
         force=force,
         dry_run=dry_run,
         write_debug_masks_dir=write_debug_masks_dir,
+        crop_override=crop_override,
     )
 
 
@@ -398,6 +430,7 @@ def render_bundle_output(
     force: bool = False,
     dry_run: bool = False,
     write_debug_masks_dir: Path | None = None,
+    crop_override: CropDeclaration | None = None,
 ) -> RenderResult:
     output_path, manifest_path = _ensure_output_path(output_path, force)
     source = _reference_source(bundle)
@@ -413,11 +446,16 @@ def render_bundle_output(
         raise RenderInputError("jpeg screen renders require 8-bit output")
 
     metadata = inspect_image(source_path)
+    resolved_crop = (
+        crop_override
+        if crop_override is not None
+        else resolve_output_crop(profile, legacy_project_crop=bundle.project.crop)
+    )
     plan = plan_render(
         profile,
         source_width=metadata.width,
         source_height=metadata.height,
-        crop=bundle.project.crop,
+        crop=resolved_crop,
     )
 
     if dry_run:
@@ -454,7 +492,7 @@ def render_bundle_output(
     try:
         source_decl, resolved_source_path, canonical, execution, prepared_sources = (
             execute_project_image(
-            bundle,
+                bundle,
                 write_debug_masks_dir=write_debug_masks_dir,
             )
         )
@@ -463,7 +501,7 @@ def render_bundle_output(
             width=canonical.width,
             height=canonical.height,
         )
-        cropped = apply_crop(mastered, bundle.project.crop)
+        cropped = apply_crop(mastered, resolved_crop)
         if plan.perform_fill_crop:
             cropped = _center_fill_crop(cropped, plan.output_size.width, plan.output_size.height)
         if cropped.width != plan.output_size.width or cropped.height != plan.output_size.height:
@@ -527,7 +565,16 @@ def render_bundle_output(
         "renderer_version": result.renderer_version,
         "render_profile_id": result.profile_id,
         "render_profile_type": result.profile_type,
-        "crop_declaration": bundle.project.crop.model_dump(mode="json"),
+        "crop_declaration": resolved_crop.model_dump(mode="json"),
+        "crop_source": (
+            "override"
+            if crop_override is not None
+            else "profile"
+            if profile.crop is not None
+            else "legacy_project"
+            if bundle.project.crop.enabled
+            else "full_frame_default"
+        ),
         "cropped_source_dimensions": result.cropped_source_dimensions.model_dump(mode="json"),
         "output_dimensions": result.output_dimensions.model_dump(mode="json"),
         "physical_dimensions": (

@@ -13,7 +13,6 @@ from engine import (
     RenderResult,
     ValidationReport,
     analyze_dark_dust,
-    apply_crop,
     diff_bundles,
     load_valid_project_bundle,
     render_bundle_output,
@@ -21,6 +20,7 @@ from engine import (
     semantic_target_influence,
     validate_project,
 )
+from engine.render import calculate_crop_box
 from image_io import CanonicalImage, inspect_image, load_canonical_image, resize_exact
 from nebula_desktop.views.image_preview import ImageSample, OverlayRegion, SemanticOverlay
 from nebula_desktop.workers.preview import PreviewRenderWorker
@@ -40,6 +40,7 @@ from project_model import (
     ColourPoint,
     ColourSmoothingTransform,
     ColourTemperatureTransform,
+    CropDeclaration,
     DarkDustSettings,
     DarkNebulaProcessingTransform,
     DeclarativeRule,
@@ -689,7 +690,11 @@ class ProjectEditorViewModel(QObject):
             return None
         return self._working_documents.bundle.project_dir
 
-    def native_render_dimensions(self) -> tuple[int, int] | None:
+    def native_render_dimensions(
+        self,
+        *,
+        crop: CropDeclaration | None = None,
+    ) -> tuple[int, int] | None:
         if self._working_documents is None:
             return None
         bundle = self._working_documents.bundle
@@ -698,17 +703,20 @@ class ProjectEditorViewModel(QObject):
             return None
         source_path = resolve_reference_path(bundle.project_dir, source.path)
         metadata = inspect_image(source_path)
-        width = max(1, int(round(bundle.project.crop.width * metadata.width)))
-        height = max(1, int(round(bundle.project.crop.height * metadata.height)))
-        return width, height
+        output_crop = crop if crop is not None else CropDeclaration()
+        if not output_crop.enabled:
+            return metadata.width, metadata.height
+        left, top, right, bottom = calculate_crop_box(output_crop, metadata.width, metadata.height)
+        return right - left, bottom - top
 
     def default_print_dimensions(
         self,
         *,
         units: PrintUnits = "cm",
         ppi: int = 300,
+        crop: CropDeclaration | None = None,
     ) -> tuple[float, float] | None:
-        native_dimensions = self.native_render_dimensions()
+        native_dimensions = self.native_render_dimensions(crop=crop)
         if native_dimensions is None:
             return None
         width_px, height_px = native_dimensions
@@ -722,6 +730,8 @@ class ProjectEditorViewModel(QObject):
         output_format: str,
         width_px: int,
         interpolation: str,
+        height_px: int | None = None,
+        crop: CropDeclaration | None = None,
     ) -> ScreenRenderProfile:
         return ScreenRenderProfile.model_validate(
             {
@@ -730,8 +740,10 @@ class ProjectEditorViewModel(QObject):
                 "color_space": "srgb",
                 "bit_depth": 8 if output_format in {"png", "jpeg"} else 16,
                 "width_px": width_px,
+                "height_px": height_px,
                 "interpolation": interpolation,
                 "jpeg_quality": 92 if output_format == "jpeg" else None,
+                "crop": crop.model_dump(mode="json") if crop is not None else None,
             }
         )
 
@@ -744,6 +756,7 @@ class ProjectEditorViewModel(QObject):
         units: PrintUnits,
         ppi: int,
         interpolation: str,
+        crop: CropDeclaration | None = None,
     ) -> PrintRenderProfile:
         return PrintRenderProfile.model_validate(
             {
@@ -757,6 +770,7 @@ class ProjectEditorViewModel(QObject):
                 "ppi": ppi,
                 "crop_mode": "fit",
                 "interpolation": interpolation,
+                "crop": crop.model_dump(mode="json") if crop is not None else None,
             }
         )
 
@@ -777,6 +791,18 @@ class ProjectEditorViewModel(QObject):
             output_path=output_path,
             force=force,
         )
+
+    def output_crop_preview_image(self) -> CanonicalImage | None:
+        if self._current_preview is not None:
+            return self._current_preview.image
+        if self._saved_preview is not None:
+            return self._saved_preview.image
+        return self._source_image
+
+    def legacy_output_crop(self) -> CropDeclaration:
+        if self._working_documents is None:
+            return CropDeclaration()
+        return self._working_documents.bundle.project.crop
 
     @property
     def dirty(self) -> bool:
@@ -2355,14 +2381,13 @@ class ProjectEditorViewModel(QObject):
             return None
         if self._show_source or self._working_documents is None:
             return self._source_image
-        cropped_source = apply_crop(self._source_image, self._working_documents.bundle.project.crop)
         if (
-            cropped_source.width == display_image.width
-            and cropped_source.height == display_image.height
+            self._source_image.width == display_image.width
+            and self._source_image.height == display_image.height
         ):
-            return cropped_source
+            return self._source_image
         return resize_exact(
-            cropped_source,
+            self._source_image,
             display_image.width,
             display_image.height,
             method="lanczos",

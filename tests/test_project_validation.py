@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from engine import validate_project
 from project_io import load_project_file, locate_project_file
-from project_model import ProjectFile
+from project_model import CropDeclaration, ProjectFile, ScreenRenderProfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -193,6 +193,53 @@ def test_project_model_accepts_faux_palette_transform() -> None:
         assert transform.type == "faux_palette"
         assert transform.supported_colour_balance()
         assert all(value == 100.0 for value in transform.supported_colour_balance().values())
+
+
+def test_render_profile_without_crop_remains_valid() -> None:
+    profile = ScreenRenderProfile.model_validate(
+        {
+            "type": "screen",
+            "format": "png",
+            "color_space": "srgb",
+            "bit_depth": 8,
+            "width_px": 2400,
+        }
+    )
+
+    assert profile.crop is None
+
+
+def test_crop_declaration_migrates_legacy_non_full_frame_to_enabled() -> None:
+    crop = CropDeclaration.model_validate(
+        {
+            "x": 0.10,
+            "y": 0.20,
+            "width": 0.70,
+            "height": 0.60,
+        }
+    )
+
+    assert crop.enabled is True
+
+
+def test_render_profile_crop_rejects_out_of_bounds_values() -> None:
+    with pytest.raises(ValueError, match="crop width must remain inside source bounds"):
+        ScreenRenderProfile.model_validate(
+            {
+                "type": "screen",
+                "format": "png",
+                "color_space": "srgb",
+                "bit_depth": 8,
+                "width_px": 2400,
+                "crop": {
+                    "enabled": True,
+                    "x": 0.75,
+                    "y": 0.10,
+                    "width": 0.30,
+                    "height": 0.60,
+                },
+            }
+        )
 
 
 def test_project_model_accepts_new_tone_and_colour_transforms() -> None:

@@ -252,6 +252,7 @@
     <ol>
       <li>Choose <code>File → Export for Screen…</code> or <code>File → Export for Print…</code>.</li>
       <li>Select the output format and size.</li>
+      <li>Choose a crop preset or click <code>Edit Crop</code> if you want a different output framing.</li>
       <li>Choose the destination path.</li>
       <li>Nebula Master renders the current adjustment stack through the shared renderer.</li>
     </ol>
@@ -260,6 +261,20 @@
       Screen export is for PNG, JPEG, or TIFF outputs sized for display. Print
       export adds physical dimensions and target DPI so you can generate output
       appropriate for printing.
+    </p>
+
+    <p>
+      Crop is part of output framing, not part of the adjustment stack. The
+      full image is mastered first. The selected crop is then applied before
+      resizing or upscaling so pixels outside the chosen frame are not enlarged
+      unnecessarily.
+    </p>
+
+    <p>
+      Different exports from the same project can use different crops. For
+      example, you can keep one full-frame screen render, make a square social
+      crop, and create a 4:5 print crop without changing the underlying
+      adjustment flow.
     </p>
 
     <h2>A Good First Workflow</h2>

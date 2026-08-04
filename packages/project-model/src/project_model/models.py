@@ -38,6 +38,17 @@ OutputFormat = Literal["png", "jpeg", "tiff"]
 ColourSpace = Literal["srgb"]
 PrintUnits = Literal["cm", "inches"]
 CropMode = Literal["fit", "fill", "exact"]
+NamedCropAspectRatio = Literal[
+    "original",
+    "custom",
+    "1:1",
+    "4:5",
+    "5:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16",
+]
 SourceRole = Literal["base", "red", "blue", "cyan", "luminance", "neutral", "custom"]
 AlignmentMode = Literal["none", "inspect", "translation", "manual"]
 SourceMixMode = Literal["weighted_average", "lighten", "screen", "channel_contribution"]
@@ -557,10 +568,67 @@ class RegionFile(StrictModel):
 
 
 class CropDeclaration(StrictModel):
+    enabled: bool = False
     x: float = Field(default=0.0, ge=0.0, le=1.0)
     y: float = Field(default=0.0, ge=0.0, le=1.0)
     width: float = Field(default=1.0, gt=0.0, le=1.0)
     height: float = Field(default=1.0, gt=0.0, le=1.0)
+    aspect_ratio: NamedCropAspectRatio | str | None = None
+    lock_aspect_ratio: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_crop(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "enabled" in data:
+            return data
+        x = float(data.get("x", 0.0))
+        y = float(data.get("y", 0.0))
+        width = float(data.get("width", 1.0))
+        height = float(data.get("height", 1.0))
+        data["enabled"] = not (
+            abs(x) <= 1e-9
+            and abs(y) <= 1e-9
+            and abs(width - 1.0) <= 1e-9
+            and abs(height - 1.0) <= 1e-9
+        )
+        return data
+
+    @field_validator("aspect_ratio")
+    @classmethod
+    def validate_aspect_ratio(
+        cls,
+        value: NamedCropAspectRatio | str | None,
+    ) -> NamedCropAspectRatio | str | None:
+        if value is None:
+            return value
+        named_values = {
+            "original",
+            "custom",
+            "1:1",
+            "4:5",
+            "5:4",
+            "3:2",
+            "2:3",
+            "16:9",
+            "9:16",
+        }
+        if value in named_values:
+            return value
+        parts = value.split(":")
+        if len(parts) != 2:
+            raise ValueError("aspect ratio must be a supported named ratio or formatted like 4:5")
+        try:
+            left = float(parts[0])
+            right = float(parts[1])
+        except ValueError as exc:  # pragma: no cover - defensive validation
+            raise ValueError(
+                "aspect ratio must be a supported named ratio or formatted like 4:5"
+            ) from exc
+        if left <= 0.0 or right <= 0.0:
+            raise ValueError("aspect ratio values must be greater than zero")
+        return value
 
     @model_validator(mode="after")
     def validate_bounds(self) -> CropDeclaration:
@@ -569,6 +637,14 @@ class CropDeclaration(StrictModel):
         if self.y + self.height > 1.0:
             raise ValueError("crop height must remain inside source bounds")
         return self
+
+    def is_full_frame(self) -> bool:
+        return (
+            abs(self.x) <= 1e-9
+            and abs(self.y) <= 1e-9
+            and abs(self.width - 1.0) <= 1e-9
+            and abs(self.height - 1.0) <= 1e-9
+        )
 
 
 class LegacyOutputDimensions(StrictModel):
@@ -593,6 +669,7 @@ class RenderProfileBase(StrictModel):
     bit_depth: Literal[8, 16]
     interpolation: InterpolationMethod = "lanczos"
     jpeg_quality: int | None = Field(default=None, ge=1, le=100)
+    crop: CropDeclaration | None = None
 
     @model_validator(mode="after")
     def validate_common_constraints(self) -> RenderProfileBase:
