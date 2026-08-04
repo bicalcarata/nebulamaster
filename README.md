@@ -21,20 +21,23 @@ For a complete walkthrough of the desktop workflow, see the [User Manual](docs/u
 
 - Latest release page: [github.com/bicalcarata/nebulamaster/releases/latest](https://github.com/bicalcarata/nebulamaster/releases/latest)
 - All versions: [github.com/bicalcarata/nebulamaster/releases](https://github.com/bicalcarata/nebulamaster/releases)
-- Latest macOS installer: [NebulaMaster-MacOS.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS.dmg)
+- Latest macOS Apple Silicon installer: [NebulaMaster-MacOS-Apple-Silicon.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS-Apple-Silicon.dmg)
+- Latest macOS Intel installer: [NebulaMaster-MacOS-Intel.dmg](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-MacOS-Intel.dmg)
 - Latest Windows installer: [NebulaMaster-Windows-Setup.exe](https://github.com/bicalcarata/nebulamaster/releases/latest/download/NebulaMaster-Windows-Setup.exe)
 
-## What’s New In 0.5.3
+Use the Apple Silicon build on M-series Macs and the Intel build on older Intel-based Macs.
 
-`0.5.3` builds directly on the `0.5.2` workflow release and adds a proper non-destructive output
-crop pipeline for screen and print export, alongside a small set of export and crop-editor fixes.
+## What’s New In 0.5.4
 
-- Screen and print export now support non-destructive output framing, so one mastered project can produce full-frame, square, portrait, social and print crops without changing the source image or the ordered adjustment stack.
-- Crop now lives in the output pipeline where it belongs: the full image is mastered first, the selected output crop is applied next, and only then is the cropped result resized or upscaled for export.
-- The crop editor now behaves like a real framing tool, with a transparent crop window, outside dimming, draggable edges and corners, fixed ratio presets, and a cropped-output preview mode.
-- Locked crop aspect ratio is now preserved at export time, which prevents stale width and height pairs from stretching the final cropped render.
-- Existing full-frame projects remain valid, and legacy root-level crop values continue to load safely while newer output-profile crop settings take precedence.
-- The earlier `0.5.2` list/inspector reliability fixes remain in place, so adjustment editing, palette tuning, semantic targeting, regions, overlays and export still run through the same shared renderer and declarative project model.
+`0.5.4` focuses on predictable faux-palette control, clearer product documentation and broader
+macOS distribution.
+
+- Every faux palette now offers a cool-colour behavior choice. `Enhance` strengthens cyan or cool colour already present in the selected structure, while `Add` introduces it into existing coherent cloud structure without inventing image detail.
+- In `Add` mode, the cool balance starts with paler selected structure and reaches progressively darker visible clouds as the balance rises. Existing projects inherit `Enhance`, preserving their previous rendering behavior.
+- Crop aspect calculations now account for source pixel dimensions as well as normalized crop coordinates, preventing non-square source images from being stretched during locked-ratio export.
+- NebulaMaster now uses its new logo and single-word branding across the desktop app, About window, installers and documentation.
+- The new user manual provides a complete first-project, adjustment, targeting, region, palette, crop and export walkthrough.
+- GitHub release packaging now builds separate, architecture-verified macOS packages for Apple Silicon and Intel Macs, alongside the existing Windows packages.
 
 ## Why NebulaMaster?
 
@@ -93,15 +96,16 @@ That means you can do things like:
 - push a colour treatment into one visible cloud
 - soften or brighten only the selected area of a target
 
-## The 0.5.3 Desktop Workflow
+## The 0.5.4 Desktop Workflow
 
 ### Ordered adjustments and palette tuning
 
 The main desktop view keeps the project, adjustment stack, preview, semantic toolbar and
 inspector visible at the same time.
 
-Faux palette adjustments behave like any other adjustment in the ordered chain. In `0.5.x` they
-also expose palette-specific colour-balance controls in the inspector.
+Faux palette adjustments behave like any other adjustment in the ordered chain. They expose
+palette-specific colour-balance controls and an `Enhance` or `Add` choice for the palette's cool
+role in the inspector.
 
 ![Desktop with Faux Hubble colour balance](docs/images/readme/desktop-main-0-5-0.png)
 
@@ -222,6 +226,12 @@ Each faux palette supports:
 - enable, disable, duplicate, move, reset and remove
 - a wet/dry `Amount`
 - per-palette colour-balance controls
+- `Enhance` or `Add` behavior for the palette's cyan or cool role
+
+`Enhance` keeps the treatment tied to cool colour already present in the selected image structure.
+`Add` is the more creative option: it colours existing coherent structure, beginning with paler
+clouds and extending into darker clouds as the cool balance increases. It changes colour, not
+astronomical detail.
 
 ### Dark-dust-specific adjustment
 
@@ -234,7 +244,7 @@ adjustment.
 It is designed to reveal faint translucent dark-nebula structure while preserving the depth of the
 denser obscuring regions already present in the image.
 
-## New Finishing Controls In This Slice
+## Additional Finishing Controls
 
 NebulaMaster now includes four additional ordered declarative adjustments that sit in the same
 stack as the existing tools:
@@ -336,7 +346,7 @@ The current desktop release supports:
 - non-destructive crop editing for export profiles
 - screen export
 - print export
-- macOS and Windows packaged desktop builds
+- macOS Apple Silicon, macOS Intel and Windows packaged desktop builds
 
 ## Renderer And CLI
 
@@ -407,10 +417,15 @@ Artifacts are written to `dist/`.
 
 Current release asset names are:
 
-- `NebulaMaster-MacOS.dmg`
-- `NebulaMaster-MacOS.app.zip`
+- `NebulaMaster-MacOS-Apple-Silicon.dmg`
+- `NebulaMaster-MacOS-Apple-Silicon.app.zip`
+- `NebulaMaster-MacOS-Intel.dmg`
+- `NebulaMaster-MacOS-Intel.app.zip`
 - `NebulaMaster-Windows-Setup.exe`
 - `NebulaMaster-Windows.zip`
+
+Local macOS packaging builds for the current machine. The release workflow builds and verifies
+separate Apple Silicon and Intel packages on their respective GitHub-hosted runners.
 
 ## Release Workflow
 
@@ -418,14 +433,14 @@ The repository includes GitHub Actions for:
 
 - CI
 - manual release-tag creation
-- macOS desktop packaging
+- macOS Apple Silicon and Intel desktop packaging
 - Windows desktop packaging
 
 For a normal versioned release:
 
-1. Bump the repo version, for example to `0.5.3`.
+1. Bump the repo version, for example to `0.5.4`.
 2. Push the commit to GitHub.
-3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.3`.
+3. Run `Create Release` from the GitHub Actions tab with a tag such as `v0.5.4`.
 4. Let `Package Desktop` build the macOS and Windows artifacts for that tag.
 5. Publish the immutable release once the artifacts are attached.
 

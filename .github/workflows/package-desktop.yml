@@ -31,9 +31,26 @@ jobs:
           gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --title "${RELEASE_TAG}" --generate-notes --draft
 
   package-macos:
+    name: Package macOS (${{ matrix.display_name }})
     needs: prepare-release
     if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            python_architecture: arm64
+            executable_architecture: arm64
+            artifact_name: nebula-desktop-macos-apple-silicon
+            asset_suffix: Apple-Silicon
+            display_name: Apple Silicon
+          - runner: macos-15-intel
+            python_architecture: x64
+            executable_architecture: x86_64
+            artifact_name: nebula-desktop-macos-intel
+            asset_suffix: Intel
+            display_name: Intel
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Check out repository
@@ -45,6 +62,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+          architecture: ${{ matrix.python_architecture }}
 
       - name: Install uv
         run: python -m pip install uv
@@ -55,23 +73,33 @@ jobs:
       - name: Build macOS desktop bundle
         run: uv run python scripts/package_desktop.py
 
+      - name: Verify macOS executable architecture
+        run: |
+          executable="dist/NebulaMaster.app/Contents/MacOS/NebulaMaster"
+          architectures="$(lipo -archs "${executable}")"
+          echo "Built executable architectures: ${architectures}"
+          if [[ " ${architectures} " != *" ${{ matrix.executable_architecture }} "* ]]; then
+            echo "Expected ${{ matrix.executable_architecture }}, got ${architectures}." >&2
+            exit 1
+          fi
+
       - name: Upload desktop packaging artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: nebula-desktop-macos
+          name: ${{ matrix.artifact_name }}
           path: |
             dist/NebulaMaster.app
-            dist/NebulaMaster-MacOS.app.zip
-            dist/NebulaMaster-MacOS.dmg
+            dist/NebulaMaster-MacOS-${{ matrix.asset_suffix }}.app.zip
+            dist/NebulaMaster-MacOS-${{ matrix.asset_suffix }}.dmg
 
       - name: Upload macOS assets to draft release
         if: startsWith(env.RELEASE_TAG, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files=("dist/NebulaMaster-MacOS.app.zip")
-          if [[ -f "dist/NebulaMaster-MacOS.dmg" ]]; then
-            files+=("dist/NebulaMaster-MacOS.dmg")
+          files=("dist/NebulaMaster-MacOS-${{ matrix.asset_suffix }}.app.zip")
+          if [[ -f "dist/NebulaMaster-MacOS-${{ matrix.asset_suffix }}.dmg" ]]; then
+            files+=("dist/NebulaMaster-MacOS-${{ matrix.asset_suffix }}.dmg")
           fi
           gh release upload "${RELEASE_TAG}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
 

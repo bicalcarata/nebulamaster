@@ -59,36 +59,29 @@ The renderer should retain enough execution metadata to explain why a pixel or r
 
 ## Suggested Package Boundaries
 
-Initial logical modules:
+Current logical modules:
 
 - `project-model`
   - Schema definitions for projects, regions, palettes, profiles, and rules
 - `project-io`
   - Parsing, validation, normalization, migrations, and compatibility checks
-- `pixel-model`
-  - Internal pixel representation and derived attributes
-- `semantic-engine`
-  - Layer classification, region membership, and plugin-provided masks
-- `query-engine`
-  - Rule matching over semantic layers, colour points, brightness ranges, and regions
-- `transform-engine`
-  - Declarative transformation execution and composition
-- `render-engine`
-  - Preview and export generation
-- `explain-engine`
-  - Pixel-level and version-to-version semantic explanations
-- `plugin-runtime`
-  - Plugin discovery, version locking, capability registration, and migrations
-- `cli`
+- `image-io`
+  - Canonical float32 RGB images, source decoding, output encoding, metadata, and checksums
+- `engine`
+  - Source composition, semantic masks, rule selection, ordered transforms, preview, final render,
+    crop, execution traces, and project diff
+- `versioning`
+  - Local Git-backed project history
+- `renderer-cli`
   - Stable command surface
-- `desktop-client`
+- `desktop`
   - UI editor using the renderer API
 
 ## Rendering Pipeline
 
 Recommended pipeline:
 
-1. Load project and lock plugin versions.
+1. Load and validate the project and plugin-lock declarations.
 2. Validate schema and normalize config.
 3. Load immutable source image data.
 4. Build semantic views and region memberships.
@@ -96,7 +89,9 @@ Recommended pipeline:
 6. Compile declarative rules into executable selectors and transforms.
 7. Execute rules deterministically.
 8. Produce preview or final output.
-9. Persist explanation metadata for inspection.
+9. Emit explanation and provenance metadata for inspection.
+
+Plugin lock entries are validated and preserved, but plugin runtime loading remains deferred.
 
 ## Determinism Requirements
 

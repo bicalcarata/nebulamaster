@@ -18,8 +18,6 @@ WINDOWS_INSTALLER_SCRIPT = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula
 ASSETS_DIR = ROOT_DIR / "apps" / "desktop" / "assets"
 ICON_ICNS = ASSETS_DIR / "nebula-master.icns"
 APP_NAME = "NebulaMaster"
-MACOS_ZIP_NAME = "NebulaMaster-MacOS.app.zip"
-MACOS_DMG_NAME = "NebulaMaster-MacOS.dmg"
 WINDOWS_ZIP_NAME = "NebulaMaster-Windows.zip"
 WINDOWS_INSTALLER_NAME = "NebulaMaster-Windows-Setup.exe"
 
@@ -56,6 +54,23 @@ def _app_version() -> str:
     if not isinstance(version, str) or not version:
         raise PackagingError("Could not determine application version from pyproject.toml.")
     return version
+
+
+def _macos_architecture_label(machine: str | None = None) -> str:
+    architecture = (machine or platform.machine()).lower()
+    if architecture in {"arm64", "aarch64"}:
+        return "Apple-Silicon"
+    if architecture in {"x86_64", "amd64"}:
+        return "Intel"
+    raise PackagingError(f"Unsupported macOS packaging architecture: {architecture}")
+
+
+def _macos_artifact_names(machine: str | None = None) -> tuple[str, str]:
+    architecture = _macos_architecture_label(machine)
+    return (
+        f"{APP_NAME}-MacOS-{architecture}.app.zip",
+        f"{APP_NAME}-MacOS-{architecture}.dmg",
+    )
 
 
 def _build_icons() -> None:
@@ -120,9 +135,10 @@ def _build_windows_installer(app_dir: Path) -> Path | None:
 
 
 def _package_macos() -> list[Path]:
+    zip_name, dmg_name = _macos_artifact_names()
     app_bundle_path = DIST_DIR / f"{APP_NAME}.app"
-    zip_path = DIST_DIR / MACOS_ZIP_NAME
-    dmg_path = DIST_DIR / MACOS_DMG_NAME
+    zip_path = DIST_DIR / zip_name
+    dmg_path = DIST_DIR / dmg_name
     _clean_path(app_bundle_path)
     _clean_path(zip_path)
     _clean_path(dmg_path)

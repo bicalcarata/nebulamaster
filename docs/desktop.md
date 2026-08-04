@@ -10,7 +10,7 @@ The renderer remains authoritative. The desktop does not contain its own image-p
 - Preview renders are ephemeral.
 - Saving writes project metadata only.
 - Unsupported saved adjustments are preserved and continue to render.
-- Only metadata files whose semantic content changed are rewritten in this slice.
+- Only metadata files whose semantic content changed are rewritten when saving.
 
 ## Project Creation
 
@@ -33,18 +33,17 @@ The current desktop supports a beginner-facing mastering desk with:
 - Adjustments in declaration order
 - Regions
 - A shared-engine preview
-- Semantic target selection for Combined Image, Nebula, and Stars
+- Semantic target selection for Combined Image, Nebula, Stars, and Dark Dust
 - Diagnostic semantic overlays
 - An unsaved semantic change list
 
 Supported editable adjustments:
 
+- Black Point, Shadows, Brightness, Levels, Tone Shaping, and Local Contrast
 - Blue, Red, Green, Cyan, and Yellow colour amount
-- Brightness
-- Saturation
-- Black Point
-- Shadows
-- Colour smoothness
+- Saturation, Vibrance, Colour Temperature, and Colour Smoothness
+- Faux Hubble, Faux HOO, Foraxx-Inspired, Gold & Cyan, and Natural Bi-colour
+- Dark Nebula Processing
 
 Unsupported saved adjustments remain visible, render normally, and are preserved on save.
 
@@ -89,11 +88,12 @@ The same sampling path is reused by explicit colour-point picking actions such a
 
 ## Semantic Targets And Overlays
 
-Each adjustment can target one of three semantic layers:
+Each adjustment can target one of four semantic layers:
 
 - Combined Image
 - Nebula
 - Stars
+- Dark Dust
 
 This target affects both selection and transformation execution in the shared renderer.
 
@@ -102,6 +102,7 @@ The preview can also show semantic diagnostic overlays:
 - `Overlay: Off`
 - `Overlay: Stars`
 - `Overlay: Nebula`
+- `Overlay: Dark Dust`
 
 These overlays are preview diagnostics only. They do not become project metadata, and they do not change the rendered output or exported files.
 
@@ -151,6 +152,9 @@ Print export supports:
 - Output units
 - Target DPI / PPI
 
+Both export paths support non-destructive normalized crop declarations. The renderer masters the
+full image first, applies the output crop, and then resizes or upscales the cropped result.
+
 Export remains declarative in the same sense as preview rendering: the output file is generated from immutable sources and project metadata and is not fed back into project state.
 
 ## Platform Support
@@ -159,8 +163,11 @@ The desktop runtime is written against cross-platform Python and Qt APIs.
 
 Current packaging support:
 
-- macOS native bundle packaging through PyInstaller, `.app`, `.zip`, and `.dmg`
+- macOS Apple Silicon and Intel bundles through PyInstaller, `.app`, `.zip`, and `.dmg`
 - Windows native packaging through PyInstaller, a packaged app directory, and a distributable `.zip`
+
+The release workflow builds macOS on separate native runners and verifies the bundled executable
+architecture before publishing architecture-labelled assets.
 
 The current repository does not require a macOS-only code path to run the desktop itself. Platform-specific behavior is isolated to packaging and icon generation.
 

@@ -299,7 +299,7 @@ These adjustments help refine the balance and presentation of existing colour in
 - `Gold & Cyan`
 - `Natural Bi-colour`
 
-These are creative palette treatments for RGB images. They do not reconstruct true narrowband data. They behave like normal ordered adjustments and can be targeted, scoped, moved, duplicated, enabled, or disabled like other adjustments.
+These are creative palette treatments for RGB images. They do not reconstruct true narrowband data. They behave like normal ordered adjustments and can be targeted, scoped, moved, duplicated, enabled, or disabled like other adjustments. Each palette also lets you choose whether its cool role enhances existing cool colour or introduces cool colour into visible source structure.
 
 ### 8.4 Dark Structure Adjustment
 
@@ -567,6 +567,19 @@ The main amount acts like a wet/dry mix between the incoming image and the fully
 ### 16.3 Palette Balance Controls
 
 Some palettes expose additional balance controls. Use these when the base palette is close but one colour family needs finer control.
+
+### 16.4 Cool Colour Behavior
+
+Every faux palette offers a behavior choice for its cyan or cool role:
+
+- `Enhance` strengthens cool colour already present in the selected image structure.
+- `Add` introduces cool colour into coherent selected structure, starting with paler clouds and reaching progressively darker visible clouds as the cyan or cool balance rises.
+
+Use `Enhance` when the source already contains useful blue or cyan variation. Use `Add` when the creative palette needs a cool counterpart but the prepared RGB image contains little existing cool colour.
+
+`Add` changes the colour of structure already present in the image. It does not generate clouds, texture, stars, or astronomical detail. The adjustment's `Affects` target and optional regions still constrain where the result is blended.
+
+Projects created before this control was introduced use `Enhance` by default, so reopening an existing project does not silently change its render.
 
 ## 17. Reviewing and Saving Changes
 

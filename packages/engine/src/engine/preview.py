@@ -68,7 +68,7 @@ def _renderer_version() -> str:
     try:
         return version("nebula-renderer-cli")
     except PackageNotFoundError:
-        return "0.5.3"
+        return "0.5.4"
 
 
 def _ensure_output_path(output_path: Path, force: bool) -> Path:

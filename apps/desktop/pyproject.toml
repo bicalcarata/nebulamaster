@@ -1,6 +1,6 @@
 [project]
 name = "nebula-desktop"
-version = "0.5.3"
+version = "0.5.4"
 description = "Desktop authoring client for NebulaMaster"
 requires-python = ">=3.13,<3.14"
 dependencies = [
