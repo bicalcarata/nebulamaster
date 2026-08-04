@@ -10,6 +10,8 @@ You start with the image your telescope software already produced. Nebula Master
 the nebula, stars, dark dust and colour balance with ordered, non-destructive adjustments. Your
 source image is never modified.
 
+For a complete walkthrough of the desktop workflow, see the [User Manual](docs/user_manual.md).
+
 ![Nebula Master desktop hero](docs/images/readme/desktop-main-0-5-0.png)
 
 ## Download
