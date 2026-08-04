@@ -2,7 +2,7 @@
 
 **Nebula Master starts where your smart telescope finishes.**
 
-Nebula Master is a desktop image-mastering application for already-prepared deep-sky images.
+Nebula Master is a free desktop image-mastering application for already-prepared deep-sky images.
 It is designed for beginners who want better final results from smart-telescope images without
 learning a conventional astrophotography processing stack or a general-purpose photo editor.
 
