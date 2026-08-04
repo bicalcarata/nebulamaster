@@ -153,7 +153,7 @@ def _git_config_value(repo_root: Path, key: str) -> str | None:
 
 def _ensure_local_commit_identity(repo_root: Path) -> None:
     if _git_config_value(repo_root, "user.name") is None:
-        _run_git(repo_root, ["config", "user.name", "Nebula Master"])
+        _run_git(repo_root, ["config", "user.name", "NebulaMaster"])
     if _git_config_value(repo_root, "user.email") is None:
         _run_git(repo_root, ["config", "user.email", "nebula-master@local.invalid"])
 

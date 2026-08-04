@@ -388,8 +388,18 @@ def _rule_faux_palette(
     amount: float = 0.0,
     preserve_brightness: bool = True,
     colour_balance: dict[str, float] | None = None,
+    cool_mode: str | None = None,
     regions: list[str] | None = None,
 ) -> dict[str, Any]:
+    transform: dict[str, Any] = {
+        "type": "faux_palette",
+        "palette": palette,
+        "amount": amount,
+        "preserve_brightness": preserve_brightness,
+        "colour_balance": colour_balance or {},
+    }
+    if cool_mode is not None:
+        transform["cool_mode"] = cool_mode
     return {
         "id": rule_id,
         "name": name,
@@ -398,13 +408,7 @@ def _rule_faux_palette(
         "target": target,
         "regions": regions or [],
         "match": {"softness": 0.5},
-        "transform": {
-            "type": "faux_palette",
-            "palette": palette,
-            "amount": amount,
-            "preserve_brightness": preserve_brightness,
-            "colour_balance": colour_balance or {},
-        },
+        "transform": transform,
     }
 
 
@@ -576,6 +580,27 @@ def _faux_palette_swatch_image() -> np.ndarray:
         ],
         dtype=np.float32,
     )
+
+
+def _red_nebula_tonal_image() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    y, x = np.mgrid[0:64, 0:96].astype(np.float32)
+    x /= 95.0
+    y /= 63.0
+    darker_cloud = np.exp(
+        -(((x - 0.30) / 0.20) ** 2 + ((y - 0.58) / 0.30) ** 2) * 1.8
+    ).astype(np.float32)
+    pale_cloud = np.exp(
+        -(((x - 0.73) / 0.17) ** 2 + ((y - 0.40) / 0.26) ** 2) * 1.8
+    ).astype(np.float32)
+    wisp = np.exp(
+        -(((x - 0.54) / 0.32) ** 2 + ((y - 0.76) / 0.10) ** 2) * 1.8
+    ).astype(np.float32)
+
+    red = 0.055 + (0.25 * darker_cloud) + (0.68 * pale_cloud) + (0.12 * wisp)
+    green = 0.025 + (0.075 * darker_cloud) + (0.24 * pale_cloud) + (0.04 * wisp)
+    blue = 0.018 + (0.035 * darker_cloud) + (0.11 * pale_cloud) + (0.02 * wisp)
+    image = np.stack([red, green, blue], axis=-1).astype(np.float32, copy=False)
+    return image, pale_cloud > 0.72, darker_cloud > 0.72
 
 
 def _palette_output(
@@ -1697,6 +1722,161 @@ def test_hubble_colour_balance_controls_shift_expected_destination_families() ->
 
     assert boosted_cyan[0, 1, 2] > default[0, 1, 2]
     assert reduced_gold[0, 0, 0] < default[0, 0, 0]
+
+
+@pytest.mark.parametrize(
+    ("palette", "cool_key"),
+    [
+        ("hubble", "cyan"),
+        ("hoo", "cyan"),
+        ("foraxx", "cyan"),
+        ("gold_cyan", "cyan"),
+        ("natural_bicolour", "cool"),
+    ],
+)
+def test_faux_palette_cool_balance_reaches_from_pale_into_darker_structure(
+    palette: str,
+    cool_key: str,
+) -> None:
+    image, pale, darker = _red_nebula_tonal_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+    low = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="add",
+        colour_balance={cool_key: 20.0},
+    )
+    high = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="add",
+        colour_balance={cool_key: 200.0},
+    )
+
+    source_coolness = image[..., 2] - image[..., 0]
+    low_shift = (low[..., 2] - low[..., 0]) - source_coolness
+    high_shift = (high[..., 2] - high[..., 0]) - source_coolness
+    assert float(low_shift[pale].mean()) > float(low_shift[darker].mean()) + 0.005
+    assert float(high_shift[darker].mean()) > float(low_shift[darker].mean()) + 0.02
+
+
+@pytest.mark.parametrize("palette", FAUX_PALETTE_IDS)
+def test_faux_palette_tonal_reach_does_not_create_structure_in_a_flat_field(
+    palette: str,
+) -> None:
+    image = np.full((32, 48, 3), (0.42, 0.14, 0.08), dtype=np.float32)
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+    transformed = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="add",
+        colour_balance={"cool" if palette == "natural_bicolour" else "cyan": 200.0},
+    )
+
+    assert np.max(np.ptp(transformed, axis=(0, 1))) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("palette", "cool_key"),
+    [
+        ("hubble", "cyan"),
+        ("hoo", "cyan"),
+        ("foraxx", "cyan"),
+        ("gold_cyan", "cyan"),
+        ("natural_bicolour", "cool"),
+    ],
+)
+def test_faux_palette_add_mode_introduces_more_cool_colour_than_enhance_mode(
+    palette: str,
+    cool_key: str,
+) -> None:
+    image, pale, darker = _red_nebula_tonal_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+    enhance = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="enhance",
+        colour_balance={cool_key: 200.0},
+    )
+    add = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="add",
+        colour_balance={cool_key: 200.0},
+    )
+
+    support = pale | darker
+    enhance_coolness = enhance[..., 2] - enhance[..., 0]
+    add_coolness = add[..., 2] - add[..., 0]
+    assert float(add_coolness[support].mean()) > float(enhance_coolness[support].mean()) + 0.01
+
+
+@pytest.mark.parametrize("palette", FAUX_PALETTE_IDS)
+def test_faux_palette_default_mode_matches_explicit_enhance(palette: str) -> None:
+    image = _faux_palette_swatch_image()
+    weights = np.ones(image.shape[:2], dtype=np.float32)
+    default = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+    )
+    enhance = apply_faux_palette(
+        image,
+        weights,
+        palette=palette,
+        amount=1.0,
+        preserve_brightness=True,
+        cool_mode="enhance",
+    )
+
+    np.testing.assert_array_equal(default, enhance)
+
+
+def test_ordered_executor_uses_declared_faux_palette_cool_mode(tmp_path: Path) -> None:
+    image, pale, darker = _red_nebula_tonal_image()
+    colour_balance = {"gold": 100.0, "cyan": 200.0}
+    outputs: dict[str, np.ndarray] = {}
+    for mode in ("enhance", "add"):
+        project_dir = _create_project(
+            tmp_path / mode,
+            [
+                _rule_faux_palette(
+                    rule_id="gold-cyan",
+                    name="Gold & Cyan",
+                    target="combined",
+                    palette="gold_cyan",
+                    amount=1.0,
+                    colour_balance=colour_balance,
+                    cool_mode=mode,
+                )
+            ],
+        )
+        bundle, report = load_valid_project_bundle(project_dir)
+        assert bundle is not None
+        assert report.valid is True
+        outputs[mode] = execute_rule_stack(bundle, image).image
+
+    support = pale | darker
+    enhance_coolness = outputs["enhance"][..., 2] - outputs["enhance"][..., 0]
+    add_coolness = outputs["add"][..., 2] - outputs["add"][..., 0]
+    assert float(add_coolness[support].mean()) > float(enhance_coolness[support].mean()) + 0.01
 
 
 def test_faux_palettes_preserve_brightness_keeps_luminance_within_tolerance() -> None:

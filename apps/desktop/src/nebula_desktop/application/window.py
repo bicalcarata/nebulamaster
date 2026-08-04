@@ -205,14 +205,13 @@ def _load_help_document_html() -> str:
     if document_path.is_file():
         return document_path.read_text(encoding="utf-8")
     return (
-        "<h1>Nebula Master Help</h1>"
+        "<h1>NebulaMaster Help</h1>"
         "<p>The help document could not be loaded from the application bundle.</p>"
     )
 
 
 def _build_about_html() -> str:
     return (
-        "<h1>Nebula Master</h1>"
         f"<p><strong>Version:</strong> {__version__}</p>"
         "<p>Beginner-friendly image mastering for nebula and dark-nebula images "
         "produced by smart telescopes.</p>"
@@ -238,7 +237,7 @@ class HelpDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, *, allow_suppress: bool) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Nebula Master Help")
+        self.setWindowTitle("NebulaMaster Help")
         self.resize(860, 680)
         self._startup_preference_emitted = False
 
@@ -278,12 +277,36 @@ class HelpDialog(QDialog):
 class AboutDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("About Nebula Master")
+        self.setWindowTitle("About NebulaMaster")
         self.resize(620, 420)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(12)
+
+        logo_label = QLabel(self)
+        logo_label.setObjectName("aboutLogo")
+        logo_label.setFixedSize(72, 72)
+        logo_file = asset_path("nebula-master-icon.png")
+        if logo_file.is_file():
+            logo = QPixmap(str(logo_file)).scaled(
+                logo_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            logo_label.setPixmap(logo)
+        self.logo_label = logo_label
+
+        title_label = QLabel("<h1>NebulaMaster</h1>", self)
+        title_label.setTextFormat(Qt.TextFormat.RichText)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(logo_label)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch(1)
 
         browser = QTextBrowser(self)
         browser.setOpenExternalLinks(True)
@@ -294,6 +317,7 @@ class AboutDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
 
+        layout.addLayout(header_layout)
         layout.addWidget(browser, 1)
         layout.addWidget(buttons)
 
@@ -304,7 +328,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, project_path: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("Nebula Master Desktop")
+        self.setWindowTitle("NebulaMaster Desktop")
         self._initial_size_applied = False
         self._startup_help_prompted = False
         self._help_dialog: HelpDialog | None = None
@@ -372,7 +396,7 @@ class MainWindow(QMainWindow):
         self._rebuild_file_menu()
         help_action = QAction("Getting Started...", self)
         help_action.triggered.connect(self._show_help_dialog)
-        about_action = QAction("About Nebula Master", self)
+        about_action = QAction("About NebulaMaster", self)
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(self._show_about_dialog)
         help_menu = self.menuBar().addMenu("Help")
@@ -1346,7 +1370,7 @@ class MainWindow(QMainWindow):
     def _open_project_dialog(self) -> None:
         selected, _filter = QFileDialog.getOpenFileName(
             self,
-            "Open Nebula Master Project",
+            "Open NebulaMaster Project",
             "",
             "Nebula Project (project.yaml);;YAML Files (*.yaml *.yml)",
         )
@@ -2538,7 +2562,7 @@ class MainWindow(QMainWindow):
     def _show_error(self, summary: str, details: str) -> None:
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Nebula Master")
+        dialog.setWindowTitle("NebulaMaster")
         dialog.setText(summary)
         if details:
             dialog.setDetailedText(details)
@@ -2549,7 +2573,7 @@ class MainWindow(QMainWindow):
         is_dirty = self.view_model.dirty if dirty is None else dirty
         self.dirty_label.setText("Unsaved changes" if is_dirty else "All changes saved")
         self.save_button.setEnabled(is_dirty)
-        self.setWindowTitle(f"Nebula Master Desktop{' *' if is_dirty else ''}")
+        self.setWindowTitle(f"NebulaMaster Desktop{' *' if is_dirty else ''}")
 
     def _update_changes_header(self, count: int | None = None) -> None:
         total = len(self.view_model.unsaved_changes()) if count is None else count
@@ -2701,7 +2725,7 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if self._confirm_unsaved_navigation("closing Nebula Master"):
+        if self._confirm_unsaved_navigation("closing NebulaMaster"):
             self._adjustment_render_timer.stop()
             self.view_model.shutdown()
             super().closeEvent(event)

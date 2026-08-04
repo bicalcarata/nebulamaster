@@ -31,6 +31,7 @@ ColourChannel = Literal["red", "green", "blue"]
 SemanticTarget = Literal["combined", "nebula", "stars", "dark_dust"]
 FauxPaletteId = Literal["hubble", "hoo", "foraxx", "gold_cyan", "natural_bicolour"]
 FauxPaletteBalanceKey = Literal["gold", "green", "cyan", "red", "amber", "warm", "cool"]
+FauxPaletteCoolMode = Literal["enhance", "add"]
 LocalContrastStructureSize = Literal["fine", "medium", "broad", "very_broad"]
 InterpolationMethod = Literal["lanczos", "bicubic", "nearest"]
 RenderProfileType = Literal["screen", "print", "archive"]
@@ -378,6 +379,7 @@ class FauxPaletteTransform(StrictModel):
     palette: FauxPaletteId
     amount: float = Field(default=0.0, ge=0.0, le=1.0)
     preserve_brightness: bool = True
+    cool_mode: FauxPaletteCoolMode = "enhance"
     colour_balance: FauxPaletteColourBalance = Field(default_factory=FauxPaletteColourBalance)
 
     @model_validator(mode="after")

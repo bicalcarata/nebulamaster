@@ -7,7 +7,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 ROOT = Path(SPECPATH).resolve().parents[2]
-APP_NAME = "Nebula Master"
+APP_NAME = "NebulaMaster"
 
 desktop_src = ROOT / "apps" / "desktop" / "src"
 package_paths = [

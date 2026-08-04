@@ -283,6 +283,7 @@ def _apply_transform(
             palette=transform.palette,
             amount=transform.amount,
             preserve_brightness=transform.preserve_brightness,
+            cool_mode=transform.cool_mode,
             colour_balance=cast(dict[str, float], transform.supported_colour_balance()),
         )
     if isinstance(transform, DarkNebulaProcessingTransform):

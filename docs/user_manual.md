@@ -1,10 +1,10 @@
-# Nebula Master User Manual
+# NebulaMaster User Manual
 
 ## 1. Introduction
 
-Nebula Master is a free desktop image-mastering application for already-prepared deep-sky images. It is designed for people who want to improve a finished telescope image without learning a full astrophotography processing stack or using a general-purpose photo editor.
+NebulaMaster is a free desktop image-mastering application for already-prepared deep-sky images. It is designed for people who want to improve a finished telescope image without learning a full astrophotography processing stack or using a general-purpose photo editor.
 
-Nebula Master does not replace capture, stacking, calibration, alignment, or stretching. Those steps happen before Nebula Master. You start with an image that already exists as a TIFF, PNG, or JPEG, then use Nebula Master to refine colour, tone, stars, nebula structure, dark dust, local regions, and final output framing.
+NebulaMaster does not replace capture, stacking, calibration, alignment, or stretching. Those steps happen before NebulaMaster. You start with an image that already exists as a TIFF, PNG, or JPEG, then use NebulaMaster to refine colour, tone, stars, nebula structure, dark dust, local regions, and final output framing.
 
 The app is project-based and non-destructive:
 
@@ -13,7 +13,7 @@ The app is project-based and non-destructive:
 - Preview images are temporary renders.
 - Exported files are regenerated from the source image plus the saved project state.
 
-Think of Nebula Master as a mastering desk for one image project at a time.
+Think of NebulaMaster as a mastering desk for one image project at a time.
 
 ## 2. Core Concepts
 
@@ -21,7 +21,7 @@ Before using the app, it helps to understand four ideas that shape the workflow.
 
 ### 2.1 Projects
 
-A Nebula Master project is a folder containing:
+A NebulaMaster project is a folder containing:
 
 - `project.yaml`
 - source image references
@@ -123,11 +123,11 @@ This is how you review and save project edits.
 
 ## 4. Starting a New Project
 
-Use this workflow when you have an image but no Nebula Master project yet.
+Use this workflow when you have an image but no NebulaMaster project yet.
 
 ### 4.1 Supported Source Formats
 
-Nebula Master can create a project from:
+NebulaMaster can create a project from:
 
 - TIFF
 - PNG
@@ -142,7 +142,7 @@ Nebula Master can create a project from:
 5. Enter a project folder name when prompted.
 6. Confirm the dialog.
 
-Nebula Master will:
+NebulaMaster will:
 
 - create a new project folder
 - create the required metadata files
@@ -180,11 +180,11 @@ The app loads:
 
 ### 5.1 Recent Projects
 
-Nebula Master keeps a recent-project list in the `File` menu. Up to five recent projects can appear there for faster reopening between sessions.
+NebulaMaster keeps a recent-project list in the `File` menu. Up to five recent projects can appear there for faster reopening between sessions.
 
 ### 5.2 Unsaved Work Protection
 
-If you try to open another project, create a new one, or close the app while the current project has unsaved changes, Nebula Master asks whether to save, discard, or cancel first.
+If you try to open another project, create a new one, or close the app while the current project has unsaved changes, NebulaMaster asks whether to save, discard, or cancel first.
 
 ## 6. Everyday Editing Workflow
 
@@ -203,7 +203,7 @@ A typical session looks like this:
 
 ## 7. Working with Adjustments
 
-Adjustments are the heart of Nebula Master.
+Adjustments are the heart of NebulaMaster.
 
 ### 7.1 Add an Adjustment
 
@@ -264,7 +264,7 @@ This affects only that adjustment. Later adjustments remain active.
 
 ## 8. Adjustment Types
 
-Nebula Master supports a mix of tonal, colour, palette, and structure-focused tools.
+NebulaMaster supports a mix of tonal, colour, palette, and structure-focused tools.
 
 ### 8.1 Tonal Adjustments
 
@@ -364,7 +364,7 @@ Use it when you want to begin from an actual visible feature rather than manuall
 2. Click a visible feature in the preview.
 3. Choose the prompted adjustment type.
 
-Nebula Master creates a normal declarative adjustment at the end of the stack. It is not a temporary or special object. You can edit, reorder, duplicate, disable, scope, or remove it like any other adjustment.
+NebulaMaster creates a normal declarative adjustment at the end of the stack. It is not a temporary or special object. You can edit, reorder, duplicate, disable, scope, or remove it like any other adjustment.
 
 ### 11.3 Important Limitation
 
@@ -479,7 +479,7 @@ Overlays do not become saved image content and do not directly alter exports. Th
 
 ## 15. Dark Dust Mask Tools
 
-Nebula Master includes a dedicated dark dust analysis system that can drive both overlays and Dark Dust-targeted adjustments.
+NebulaMaster includes a dedicated dark dust analysis system that can drive both overlays and Dark Dust-targeted adjustments.
 
 ### 15.1 Where to Find It
 
@@ -570,7 +570,7 @@ Some palettes expose additional balance controls. Use these when the base palett
 
 ## 17. Reviewing and Saving Changes
 
-Nebula Master separates working edits from saved project metadata.
+NebulaMaster separates working edits from saved project metadata.
 
 ### 17.1 Unsaved Changes List
 
@@ -632,7 +632,7 @@ without altering the source image or the ordered adjustments.
 
 ### 18.4 Save Destination
 
-After confirming export options, choose a destination path. If you omit the file extension, Nebula Master adds the correct one automatically.
+After confirming export options, choose a destination path. If you omit the file extension, NebulaMaster adds the correct one automatically.
 
 If the file already exists, the app asks before overwriting it.
 
@@ -662,7 +662,7 @@ The dialog can derive sensible default print dimensions from the source resoluti
 
 ### 19.4 Export Guidance
 
-After a successful export, Nebula Master reports:
+After a successful export, NebulaMaster reports:
 
 - output path
 - final output size
@@ -670,7 +670,7 @@ After a successful export, Nebula Master reports:
 
 ## 20. Cropping and Output Framing
 
-Crop in Nebula Master is intentionally separate from the adjustment stack.
+Crop in NebulaMaster is intentionally separate from the adjustment stack.
 
 ### 20.1 Crop Presets
 
@@ -797,7 +797,7 @@ That is expected. `Keep Change` saves project metadata only. Use `Export for Scr
 
 ### 24.5 My Original Image Did Not Change
 
-That is also expected. Nebula Master is non-destructive and does not overwrite the source image.
+That is also expected. NebulaMaster is non-destructive and does not overwrite the source image.
 
 ## 25. Recommended First Session
 
@@ -816,7 +816,7 @@ That sequence introduces the project model, ordered adjustments, overlays, savin
 
 ## 26. Summary
 
-Nebula Master is best understood as a non-destructive project editor for refining finished deep-sky images. Its strengths are:
+NebulaMaster is best understood as a non-destructive project editor for refining finished deep-sky images. Its strengths are:
 
 - ordered declarative adjustments
 - semantic targeting

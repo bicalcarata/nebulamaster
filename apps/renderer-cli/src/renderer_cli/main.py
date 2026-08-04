@@ -40,7 +40,7 @@ from versioning import (
     status_for_project,
 )
 
-app = typer.Typer(help="Nebula Master renderer CLI.")
+app = typer.Typer(help="NebulaMaster renderer CLI.")
 PROJECT_PATH_ARGUMENT = typer.Argument(..., exists=True, readable=True, resolve_path=True)
 JSON_OPTION = typer.Option(False, "--json", help="Return machine-readable JSON output.")
 OUTPUT_PATH_OPTION = typer.Option(..., "--output", resolve_path=True)
@@ -84,7 +84,7 @@ LIMIT_OPTION = typer.Option(10, "--limit", min=1, help="Maximum number of versio
 
 @app.callback()
 def renderer_cli() -> None:
-    """Nebula Master renderer CLI."""
+    """NebulaMaster renderer CLI."""
 
 
 def _format_issue(issue: dict[str, Any]) -> str:

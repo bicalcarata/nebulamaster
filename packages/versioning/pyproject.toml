@@ -1,7 +1,7 @@
 [project]
 name = "nebula-versioning"
 version = "0.5.3"
-description = "Local Git-backed project history for Nebula Master"
+description = "Local Git-backed project history for NebulaMaster"
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "nebula-project-model",

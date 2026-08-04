@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from engine import validate_project
 from project_io import load_project_file, locate_project_file
-from project_model import CropDeclaration, ProjectFile, ScreenRenderProfile
+from project_model import CropDeclaration, FauxPaletteTransform, ProjectFile, ScreenRenderProfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -191,8 +191,22 @@ def test_project_model_accepts_faux_palette_transform() -> None:
 
         transform = project.rules[0].transform
         assert transform.type == "faux_palette"
+        assert transform.cool_mode == "enhance"
         assert transform.supported_colour_balance()
         assert all(value == 100.0 for value in transform.supported_colour_balance().values())
+
+
+def test_faux_palette_transform_rejects_unknown_cool_mode() -> None:
+    with pytest.raises(Exception) as error_info:  # noqa: BLE001
+        FauxPaletteTransform.model_validate(
+            {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "cool_mode": "replace",
+            }
+        )
+
+    assert "Input should be 'enhance' or 'add'" in str(error_info.value)
 
 
 def test_render_profile_without_crop_remains_valid() -> None:
@@ -422,6 +436,7 @@ def test_faux_palette_transform_accepts_supported_colour_balance_controls() -> N
                         "palette": "hubble",
                         "amount": 0.6,
                         "preserve_brightness": True,
+                        "cool_mode": "add",
                         "colour_balance": {"gold": 80.0, "green": 120.0, "cyan": 140.0},
                     },
                 }
@@ -431,6 +446,7 @@ def test_faux_palette_transform_accepts_supported_colour_balance_controls() -> N
 
     transform = project.rules[0].transform
     assert transform.type == "faux_palette"
+    assert transform.cool_mode == "add"
     assert transform.supported_colour_balance() == {
         "gold": 80.0,
         "green": 120.0,

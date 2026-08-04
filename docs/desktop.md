@@ -1,6 +1,6 @@
 # Desktop Authoring Client
 
-Nebula Master desktop is a visual authoring client for declarative projects.
+NebulaMaster desktop is a visual authoring client for declarative projects.
 
 The renderer remains authoritative. The desktop does not contain its own image-processing pipeline and it does not call the CLI through subprocesses. Every preview comes from the shared engine.
 

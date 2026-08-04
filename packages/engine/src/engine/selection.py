@@ -6,6 +6,7 @@ import numpy as np
 from project_model import (
     FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS as PROJECT_FAUX_PALETTE_SUPPORTED_KEYS,
 )
+from project_model import FauxPaletteCoolMode
 
 LINEAR_LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 LUMA_WEIGHT = 0.25
@@ -1270,11 +1271,137 @@ def _faux_palette_component_multipliers(
     ), True
 
 
+def _palette_cool_balance(
+    palette: str,
+    colour_balance: dict[str, float] | None,
+) -> float:
+    supported = FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS.get(palette, ())
+    key = "cyan" if "cyan" in supported else "cool" if "cool" in supported else None
+    if key is None:
+        return 0.0
+    return float(np.clip((colour_balance or {}).get(key, 100.0), 0.0, 200.0))
+
+
+def _selected_box_blur(
+    plane: np.ndarray,
+    selection_weights: np.ndarray,
+    radius: int,
+) -> np.ndarray:
+    weighted_sum = box_blur((plane * selection_weights)[..., None], radius)[..., 0]
+    weight_sum = box_blur(selection_weights[..., None], radius)[..., 0]
+    averaged = np.divide(
+        weighted_sum,
+        np.maximum(weight_sum, EPSILON),
+        out=np.zeros_like(weighted_sum),
+        where=weight_sum > EPSILON,
+    ).astype(np.float32, copy=False)
+    return np.asarray(averaged, dtype=np.float32)
+
+
+def _relative_support(
+    field: np.ndarray,
+    selected: np.ndarray,
+    *,
+    low_percentile: float,
+    high_percentile: float,
+) -> np.ndarray:
+    selected_values = field[selected]
+    low = float(np.percentile(selected_values, low_percentile))
+    high = float(np.percentile(selected_values, high_percentile))
+    if high - low <= 1e-5:
+        return np.zeros(field.shape, dtype=np.float32)
+    return _smoothstep_range(field, low, high)
+
+
+def _tonal_cool_proxy(
+    current_rgb: np.ndarray,
+    selection_weights: np.ndarray,
+    cool_balance: float,
+) -> np.ndarray:
+    """Expand a palette's cool role from pale selected structure into darker tones."""
+    proxy = np.zeros(current_rgb.shape[:2], dtype=np.float32)
+    if cool_balance <= EPSILON:
+        return proxy
+
+    selected = selection_weights > 0.05
+    if np.count_nonzero(selected) < 16:
+        return proxy
+
+    luminance = compute_luminance(current_rgb)
+    selected_luminance = luminance[selected]
+    low = float(np.percentile(selected_luminance, 5.0))
+    high = float(np.percentile(selected_luminance, 95.0))
+    span = high - low
+    if span <= 1e-4:
+        return proxy
+
+    tonal_position = np.clip((luminance - low) / span, 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
+    )
+
+    shorter_edge = min(current_rgb.shape[0], current_rgb.shape[1])
+    if shorter_edge >= 16:
+        tone_radius = max(1, int(round(shorter_edge * 0.006)))
+        tonal_position = _selected_box_blur(
+            tonal_position,
+            selection_weights,
+            tone_radius,
+        )
+
+        cloud_radius = max(2, int(round(shorter_edge * 0.018)))
+        broad_radius = max(cloud_radius + 1, int(round(shorter_edge * 0.055)))
+        chroma = (np.max(current_rgb, axis=-1) - np.min(current_rgb, axis=-1)).astype(
+            np.float32,
+            copy=False,
+        )
+        coherent_chroma = _selected_box_blur(chroma, selection_weights, cloud_radius)
+        broad_luminance = _selected_box_blur(luminance, selection_weights, broad_radius)
+        local_structure = _selected_box_blur(
+            np.abs(luminance - broad_luminance).astype(np.float32, copy=False),
+            selection_weights,
+            cloud_radius,
+        )
+        chroma_support = _relative_support(
+            coherent_chroma,
+            selected,
+            low_percentile=42.0,
+            high_percentile=88.0,
+        ) * _smoothstep_range(coherent_chroma, 0.025, 0.075)
+        structure_support = _relative_support(
+            local_structure,
+            selected,
+            low_percentile=48.0,
+            high_percentile=92.0,
+        ) * _smoothstep_range(local_structure, 0.0015, 0.010)
+        cloud_support = np.maximum(
+            chroma_support,
+            structure_support,
+        ).astype(np.float32, copy=False)
+    else:
+        cloud_support = np.ones(current_rgb.shape[:2], dtype=np.float32)
+
+    reach = float(np.clip(cool_balance / 200.0, 0.0, 1.0))
+    threshold = 1.0 - reach
+    eligible = _smoothstep_range(tonal_position, threshold - 0.12, threshold + 0.12)
+    visible_structure = _smoothstep_range(tonal_position, 0.02, 0.16)
+    proxy = np.clip(
+        eligible
+        * visible_structure
+        * cloud_support
+        * np.clip(selection_weights, 0.0, 1.0),
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+    return np.asarray(proxy, dtype=np.float32)
+
+
 def _map_faux_palette(
     current_rgb: np.ndarray,
     definition: FauxPaletteDefinition,
     *,
     component_multipliers: tuple[float, float, float, float],
+    tonal_cool_proxy: np.ndarray | None = None,
 ) -> np.ndarray:
     red = current_rgb[..., 0].astype(np.float32, copy=False)
     green = current_rgb[..., 1].astype(np.float32, copy=False)
@@ -1330,6 +1457,12 @@ def _map_faux_palette(
         0.0,
         1.0,
     ).astype(np.float32, copy=False)
+    if tonal_cool_proxy is not None:
+        source_structure = np.maximum(warm_proxy, red_proxy)
+        cool_proxy = np.maximum(
+            cool_proxy,
+            tonal_cool_proxy * source_structure * 1.15,
+        ).astype(np.float32, copy=False)
 
     dominant_proxy = np.maximum(np.maximum(warm_proxy, red_proxy), cool_proxy)
     neutral_proxy = np.clip(
@@ -1394,6 +1527,7 @@ def apply_faux_palette(
     palette: str,
     amount: float,
     preserve_brightness: bool,
+    cool_mode: FauxPaletteCoolMode = "enhance",
     colour_balance: dict[str, float] | None = None,
 ) -> np.ndarray:
     clamped_amount = max(0.0, min(1.0, amount))
@@ -1416,6 +1550,15 @@ def apply_faux_palette(
         current_rgb,
         definition,
         component_multipliers=component_multipliers,
+        tonal_cool_proxy=(
+            _tonal_cool_proxy(
+                current_rgb,
+                weights,
+                _palette_cool_balance(palette, colour_balance),
+            )
+            if cool_mode == "add"
+            else None
+        ),
     )
     mapped_linear = srgb_to_linear(mapped_srgb)
     if preserve_brightness:

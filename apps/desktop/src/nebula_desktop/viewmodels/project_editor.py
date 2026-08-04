@@ -44,6 +44,7 @@ from project_model import (
     DarkDustSettings,
     DarkNebulaProcessingTransform,
     DeclarativeRule,
+    FauxPaletteCoolMode,
     FauxPaletteTransform,
     Feather,
     FileReference,
@@ -373,8 +374,22 @@ def _helper_text(rule: DeclarativeRule) -> str:
     return "This saved adjustment is preserved and continues to render."
 
 
-def _palette_balance_helper_text(palette: str, label: str) -> str:
+def _palette_balance_helper_text(
+    palette: str,
+    label: str,
+    cool_mode: FauxPaletteCoolMode,
+) -> str:
     palette_name = FAUX_PALETTE_DISPLAY_NAMES.get(palette, palette.replace("_", " ").title())
+    if label.lower() in {"cyan", "cool"}:
+        if cool_mode == "enhance":
+            return (
+                f"Strengthens {label.lower()} already present in the selected image "
+                f"structure using the {palette_name} palette."
+            )
+        return (
+            f"Adds {label.lower()} first to pale selected structure, then reaches "
+            f"progressively darker visible clouds in the {palette_name} palette."
+        )
     return f"Controls the {label.lower()} contribution inside the {palette_name} palette."
 
 
@@ -1240,6 +1255,25 @@ class ProjectEditorViewModel(QObject):
                 primary_value = transform.amount
                 option_label = "Preserve Brightness"
                 option_enabled = transform.preserve_brightness
+                cool_label = "Cool" if transform.palette == "natural_bicolour" else "Cyan"
+                extra_controls_title = f"{cool_label} Behaviour"
+                extra_controls_helper = (
+                    f"Enhance strengthens {cool_label.lower()} already present in the image. "
+                    f"Add introduces {cool_label.lower()} into coherent selected structure, "
+                    "starting with paler clouds and reaching darker clouds as its balance rises."
+                )
+                choice_controls = (
+                    ChoiceControlSummary(
+                        key="cool_mode",
+                        label=f"{cool_label} Behaviour",
+                        value=transform.cool_mode,
+                        options=(
+                            ("enhance", "Enhance"),
+                            ("add", "Add"),
+                        ),
+                        helper_text=extra_controls_helper,
+                    ),
+                )
                 balance_labels: dict[str, str] = {
                     balance_key: balance_label
                     for balance_key, balance_label in FAUX_PALETTE_COLOUR_BALANCE_LABELS.items()
@@ -1256,6 +1290,7 @@ class ProjectEditorViewModel(QObject):
                         helper_text=_palette_balance_helper_text(
                             transform.palette,
                             balance_labels[key],
+                            transform.cool_mode,
                         ),
                     )
                     for key in FAUX_PALETTE_SUPPORTED_COLOUR_BALANCE_KEYS[transform.palette]
@@ -2047,6 +2082,12 @@ class ProjectEditorViewModel(QObject):
             if value not in valid:
                 return
             rule.transform.structure_size = cast(LocalContrastStructureSize, value)
+            self._after_metadata_change(render=render)
+            return
+        if isinstance(rule.transform, FauxPaletteTransform) and key == "cool_mode":
+            if value not in {"enhance", "add"}:
+                return
+            rule.transform.cool_mode = cast(FauxPaletteCoolMode, value)
             self._after_metadata_change(render=render)
 
     def set_selected_adjustment_regions(self, region_ids: list[str]) -> None:

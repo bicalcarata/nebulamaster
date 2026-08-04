@@ -226,6 +226,41 @@ def test_faux_hubble_colour_balance_change_is_reported_semantically(tmp_path: Pa
     )
 
 
+def test_faux_palette_cool_behaviour_change_is_reported_semantically(tmp_path: Path) -> None:
+    project_a = _copy_example("lion-natural", tmp_path)
+    project_b = _copy_example("lion-natural", tmp_path / "second")
+    payload = _read_yaml(project_a / "project.yaml")
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    rules.append(
+        {
+            "id": "faux-hubble",
+            "name": "Faux Hubble",
+            "enabled": True,
+            "selection_source": "current",
+            "target": "nebula",
+            "match": {"softness": 0.5},
+            "transform": {
+                "type": "faux_palette",
+                "palette": "hubble",
+                "amount": 0.60,
+                "preserve_brightness": True,
+                "cool_mode": "enhance",
+            },
+        }
+    )
+    _write_yaml(project_a / "project.yaml", payload)
+    transform = rules[-1]["transform"]
+    assert isinstance(transform, dict)
+    transform["cool_mode"] = "add"
+    _write_yaml(project_b / "project.yaml", payload)
+
+    result = diff_projects(project_a, project_b)
+    summaries = [change.human_summary for change in result.modified_items]
+
+    assert "Changed Faux Hubble Cyan behaviour from Enhance to Add." in summaries
+
+
 def test_faux_palette_name_change_is_reported_semantically(tmp_path: Path) -> None:
     project_a = _copy_example("lion-natural", tmp_path)
     project_b = _copy_example("lion-natural", tmp_path / "second")

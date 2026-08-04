@@ -142,7 +142,9 @@ def _crop_ratio(crop: CropDeclaration, native_width: int, native_height: int) ->
         return _native_aspect_ratio(native_width, native_height)
     if crop.aspect_ratio in CROP_PRESET_ASPECTS:
         return CROP_PRESET_ASPECTS[crop.aspect_ratio]
-    return crop.width / max(crop.height, 1e-9)
+    crop_width = crop.width * native_width
+    crop_height = crop.height * native_height
+    return crop_width / max(crop_height, 1e-9)
 
 
 def _crop_pixel_dimensions(
@@ -167,16 +169,22 @@ def _clamp_crop_rect(
     return x, y, width, height
 
 
-def _fit_crop_to_aspect(crop: CropDeclaration, aspect_ratio: float) -> CropDeclaration:
+def _fit_crop_to_aspect(
+    crop: CropDeclaration,
+    aspect_ratio: float,
+    native_width: int,
+    native_height: int,
+) -> CropDeclaration:
     center_x = crop.x + crop.width / 2.0
     center_y = crop.y + crop.height / 2.0
     width = crop.width
     height = crop.height
+    normalized_aspect_ratio = aspect_ratio / _native_aspect_ratio(native_width, native_height)
     current_ratio = width / max(height, 1e-9)
-    if current_ratio > aspect_ratio:
-        width = min(width, height * aspect_ratio)
+    if current_ratio > normalized_aspect_ratio:
+        width = min(width, height * normalized_aspect_ratio)
     else:
-        height = min(height, width / aspect_ratio)
+        height = min(height, width / normalized_aspect_ratio)
     x, y, width, height = _clamp_crop_rect(
         center_x - width / 2.0,
         center_y - height / 2.0,
@@ -536,6 +544,7 @@ class CropEditorDialog(QDialog):
         )
         locked_aspect = (
             _crop_ratio(self._crop, self._native_width, self._native_height)
+            / _native_aspect_ratio(self._native_width, self._native_height)
             if self._crop.lock_aspect_ratio and self._crop.enabled
             else None
         )
@@ -609,11 +618,15 @@ class _BaseExportDialog(QDialog):
             self._crop = _fit_crop_to_aspect(
                 base.model_copy(update={"aspect_ratio": "original", "lock_aspect_ratio": True}),
                 _native_aspect_ratio(self._native_width, self._native_height),
+                self._native_width,
+                self._native_height,
             )
         else:
             self._crop = _fit_crop_to_aspect(
                 base.model_copy(update={"aspect_ratio": preset, "lock_aspect_ratio": True}),
                 CROP_PRESET_ASPECTS[preset],
+                self._native_width,
+                self._native_height,
             )
         self._last_enabled_crop = self._crop
         self._refresh_crop_labels()

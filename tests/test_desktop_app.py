@@ -48,7 +48,7 @@ from project_model import (
 )
 from PySide6.QtCore import QPointF, QSettings, QSignalBlocker, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
+from PySide6.QtWidgets import QApplication, QComboBox, QFileDialog, QInputDialog
 
 
 def _copy_example_project(tmp_path: Path) -> Path:
@@ -431,7 +431,7 @@ def test_help_button_opens_help_dialog(
     window.help_button.click()
     qtbot.waitUntil(lambda: window._help_dialog is not None, timeout=5000)
     assert window._help_dialog is not None
-    assert window._help_dialog.windowTitle() == "Nebula Master Help"
+    assert window._help_dialog.windowTitle() == "NebulaMaster Help"
     assert window._help_dialog.isVisible() is True
     assert window._help_dialog.suppress_checkbox.isVisible() is False
 
@@ -454,7 +454,8 @@ def test_about_menu_opens_about_dialog_with_version_and_links(
 
     assert window._about_dialog is not None
     assert isinstance(window._about_dialog, AboutDialog)
-    assert window._about_dialog.windowTitle() == "About Nebula Master"
+    assert window._about_dialog.windowTitle() == "About NebulaMaster"
+    assert window._about_dialog.logo_label.pixmap().isNull() is False
     html = window._about_dialog.browser.toHtml()
     assert desktop_version in html
     assert "github.com/bicalcarata/nebulamaster/releases/latest" in html
@@ -913,6 +914,9 @@ def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path
     assert summary.option_label == "Preserve Brightness"
     assert summary.option_enabled is True
     assert summary.supports_colour_point is False
+    assert [(control.label, control.value) for control in summary.choice_controls] == [
+        ("Cyan Behaviour", "enhance")
+    ]
     assert [(control.label, control.value) for control in summary.palette_balance_controls] == [
         ("Gold", 100.0),
         ("Green", 100.0),
@@ -922,6 +926,11 @@ def test_faux_hubble_adjustment_uses_nebula_target_and_palette_controls(tmp_path
     rule = view_model._selected_rule_model()
     assert rule is not None
     assert isinstance(rule.transform, FauxPaletteTransform)
+    view_model.set_selected_adjustment_choice_control("cool_mode", "add", render=False)
+    assert rule.transform.cool_mode == "add"
+    updated_mode = view_model.selected_adjustment_summary()
+    assert updated_mode is not None
+    assert updated_mode.choice_controls[0].value == "add"
     view_model.set_selected_adjustment_palette_balance("gold", 80.0)
     updated = view_model.selected_adjustment_summary()
     assert updated is not None
@@ -961,9 +970,45 @@ def test_additional_faux_palette_adjustments_use_shared_controls(tmp_path: Path)
         assert summary.transform_type == "faux_palette"
         assert summary.target_id == "nebula"
         assert tuple(control.label for control in summary.palette_balance_controls) == controls
+        expected_behaviour_label = (
+            "Cool Behaviour" if kind == "natural_bicolour" else "Cyan Behaviour"
+        )
+        assert [(control.label, control.value) for control in summary.choice_controls] == [
+            (expected_behaviour_label, "enhance")
+        ]
         rule = view_model._selected_rule_model()
         assert rule is not None
         assert isinstance(rule.transform, FauxPaletteTransform)
+
+
+def test_faux_palette_cool_behaviour_selector_is_visible_and_editable(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow(_copy_example_project(tmp_path))
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.view_model._current_preview is not None, timeout=5000)
+
+    window.view_model.create_adjustment("gold_cyan")
+    selectors = [
+        selector
+        for selector in window.extra_adjustment_controls_widget.findChildren(QComboBox)
+        if "Add" in [selector.itemText(index) for index in range(selector.count())]
+    ]
+
+    assert window.extra_adjustment_controls_section.isVisible() is True
+    assert len(selectors) == 1
+    selector = selectors[0]
+    assert [selector.itemText(index) for index in range(selector.count())] == [
+        "Enhance",
+        "Add",
+    ]
+    selector.setCurrentIndex(selector.findData("add"))
+    rule = window.view_model._selected_rule_model()
+    assert rule is not None
+    assert isinstance(rule.transform, FauxPaletteTransform)
+    assert rule.transform.cool_mode == "add"
 
 
 def test_palette_balance_changes_defer_panel_refresh_until_slider_release(
@@ -2865,7 +2910,7 @@ def test_screen_export_options_preserve_crop_aspect_when_locked(qtbot: Any) -> N
     options = dialog.selected_options()
 
     assert options.width_px == 2000
-    assert options.height_px == 4000
+    assert options.height_px == 3000
 
 
 def test_print_export_options_preserve_crop_aspect_when_locked(qtbot: Any) -> None:
@@ -2899,7 +2944,27 @@ def test_print_export_options_preserve_crop_aspect_when_locked(qtbot: Any) -> No
     options = dialog.selected_options()
 
     assert options.width == 20.0
-    assert options.height == 40.0
+    assert options.height == 30.0
+
+
+def test_crop_preset_uses_source_pixel_aspect_not_normalized_coordinates(
+    qtbot: Any,
+) -> None:
+    dialog = ScreenExportDialog(
+        native_width=4000,
+        native_height=3000,
+        preview_image=None,
+    )
+    qtbot.addWidget(dialog)
+
+    square_index = dialog.crop_selector.findData("1:1")
+    dialog.crop_selector.setCurrentIndex(square_index)
+    options = dialog.selected_options()
+    crop_width = round(options.crop.width * 4000)
+    crop_height = round(options.crop.height * 3000)
+
+    assert (crop_width, crop_height) == (3000, 3000)
+    assert options.width_px == options.height_px
 
 
 def test_changing_colour_adjustment_amount_updates_preview_image(

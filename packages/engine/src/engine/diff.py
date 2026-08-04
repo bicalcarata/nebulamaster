@@ -1081,7 +1081,16 @@ def _compare_rules(
                     rule_a.transform,
                     rule_b.transform,
                 )
-                if balance_summary is not None:
+                if rule_a.transform.cool_mode != rule_b.transform.cool_mode:
+                    cool_label = (
+                        "Cool" if rule_b.transform.palette == "natural_bicolour" else "Cyan"
+                    )
+                    summary = (
+                        f"Changed {rule_b.name} {cool_label} behaviour from "
+                        f"{rule_a.transform.cool_mode.capitalize()} to "
+                        f"{rule_b.transform.cool_mode.capitalize()}."
+                    )
+                elif balance_summary is not None:
                     summary = balance_summary
                 elif (
                     rule_a.transform.palette == rule_b.transform.palette

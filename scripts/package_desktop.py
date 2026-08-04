@@ -13,13 +13,11 @@ DIST_DIR = ROOT_DIR / "dist"
 BUILD_DIR = ROOT_DIR / "build" / "pyinstaller"
 PYINSTALLER_CONFIG_DIR = ROOT_DIR / "build" / "pyinstaller-config"
 DMG_STAGE_DIR = ROOT_DIR / "build" / "dmg-stage"
-ICONSET_DIR = ROOT_DIR / "build" / "nebula-master.iconset"
 SPEC_PATH = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula_master.spec"
 WINDOWS_INSTALLER_SCRIPT = ROOT_DIR / "apps" / "desktop" / "packaging" / "nebula_master.iss"
 ASSETS_DIR = ROOT_DIR / "apps" / "desktop" / "assets"
-ICON_PNG = ASSETS_DIR / "nebula-master-icon.png"
 ICON_ICNS = ASSETS_DIR / "nebula-master.icns"
-APP_NAME = "Nebula Master"
+APP_NAME = "NebulaMaster"
 MACOS_ZIP_NAME = "NebulaMaster-MacOS.app.zip"
 MACOS_DMG_NAME = "NebulaMaster-MacOS.dmg"
 WINDOWS_ZIP_NAME = "NebulaMaster-Windows.zip"
@@ -65,36 +63,8 @@ def _build_icons() -> None:
 
 
 def _build_macos_icns() -> None:
-    ICONSET_DIR.mkdir(parents=True, exist_ok=True)
-    icon_sizes = (
-        ("icon_16x16.png", 16),
-        ("icon_16x16@2x.png", 32),
-        ("icon_32x32.png", 32),
-        ("icon_32x32@2x.png", 64),
-        ("icon_128x128.png", 128),
-        ("icon_128x128@2x.png", 256),
-        ("icon_256x256.png", 256),
-        ("icon_256x256@2x.png", 512),
-        ("icon_512x512.png", 512),
-    )
-    for filename, size in icon_sizes:
-        _run(
-            "sips",
-            "-z",
-            str(size),
-            str(size),
-            str(ICON_PNG),
-            "--out",
-            str(ICONSET_DIR / filename),
-        )
-    shutil.copy2(ICON_PNG, ICONSET_DIR / "icon_512x512@2x.png")
-    try:
-        _run("iconutil", "-c", "icns", str(ICONSET_DIR), "-o", str(ICON_ICNS))
-    except PackagingError:
-        if ICON_ICNS.is_file():
-            print(f"Warning: iconutil rejected regenerated iconset; using existing {ICON_ICNS}.")
-            return
-        raise
+    if not ICON_ICNS.is_file():
+        raise PackagingError(f"macOS icon was not generated: {ICON_ICNS}")
 
 
 def _run_pyinstaller() -> None:
@@ -158,7 +128,6 @@ def _package_macos() -> list[Path]:
     _clean_path(dmg_path)
     _clean_path(BUILD_DIR)
     _clean_path(DMG_STAGE_DIR)
-    _clean_path(ICONSET_DIR)
     _build_icons()
     _build_macos_icns()
     _run_pyinstaller()

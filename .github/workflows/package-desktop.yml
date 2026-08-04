@@ -60,7 +60,7 @@ jobs:
         with:
           name: nebula-desktop-macos
           path: |
-            dist/Nebula Master.app
+            dist/NebulaMaster.app
             dist/NebulaMaster-MacOS.app.zip
             dist/NebulaMaster-MacOS.dmg
 
@@ -109,7 +109,7 @@ jobs:
         with:
           name: nebula-desktop-windows
           path: |
-            dist/Nebula Master
+            dist/NebulaMaster
             dist/NebulaMaster-Windows.zip
             dist/NebulaMaster-Windows-Setup.exe
 

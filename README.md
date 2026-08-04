@@ -1,18 +1,21 @@
-# Nebula Master
+<h1>
+  <img src="apps/desktop/assets/nebulamaster-brand.png" alt="NebulaMaster logo" width="72" align="center">
+  NebulaMaster
+</h1>
 
-**Nebula Master starts where your smart telescope finishes.**
+**NebulaMaster starts where your smart telescope finishes.**
 
-Nebula Master is a free desktop image-mastering application for already-prepared deep-sky images.
+NebulaMaster is a free desktop image-mastering application for already-prepared deep-sky images.
 It is designed for beginners who want better final results from smart-telescope images without
 learning a conventional astrophotography processing stack or a general-purpose photo editor.
 
-You start with the image your telescope software already produced. Nebula Master helps you refine
+You start with the image your telescope software already produced. NebulaMaster helps you refine
 the nebula, stars, dark dust and colour balance with ordered, non-destructive adjustments. Your
 source image is never modified.
 
 For a complete walkthrough of the desktop workflow, see the [User Manual](docs/user_manual.md).
 
-![Nebula Master desktop hero](docs/images/readme/desktop-main-0-5-0.png)
+![NebulaMaster desktop hero](docs/images/readme/desktop-main-0-5-0.png)
 
 ## Download
 
@@ -33,11 +36,11 @@ crop pipeline for screen and print export, alongside a small set of export and c
 - Existing full-frame projects remain valid, and legacy root-level crop values continue to load safely while newer output-profile crop settings take precedence.
 - The earlier `0.5.2` list/inspector reliability fixes remain in place, so adjustment editing, palette tuning, semantic targeting, regions, overlays and export still run through the same shared renderer and declarative project model.
 
-## Why Nebula Master?
+## Why NebulaMaster?
 
 ### Start with the image you already have
 
-Nebula Master is for the image that already came out of:
+NebulaMaster is for the image that already came out of:
 
 - Dwarflabs
 - Seestar
@@ -46,12 +49,12 @@ Nebula Master is for the image that already came out of:
 - any other workflow that already produced a usable TIFF, PNG or JPEG
 
 It does not replace capture, stacking, plate solving, calibration or stretching. Those happen
-upstream. Nebula Master begins with the prepared image and helps you finish it.
+upstream. NebulaMaster begins with the prepared image and helps you finish it.
 
 ```text
 Smart telescope or upstream workflow
 → prepared image
-→ Nebula Master project
+→ NebulaMaster project
 → finished screen or print render
 ```
 
@@ -114,7 +117,7 @@ Once a region exists, any existing adjustment can be scoped to it through the no
 The preview overlay selector is not just visual decoration. It shows the semantic mask family the
 renderer is already using.
 
-Use overlays to inspect what Nebula Master currently thinks is:
+Use overlays to inspect what NebulaMaster currently thinks is:
 
 - `Stars`
 - `Nebula`
@@ -233,7 +236,7 @@ denser obscuring regions already present in the image.
 
 ## New Finishing Controls In This Slice
 
-Nebula Master now includes four additional ordered declarative adjustments that sit in the same
+NebulaMaster now includes four additional ordered declarative adjustments that sit in the same
 stack as the existing tools:
 
 - `Tone Shaping` for separate shadow, midtone, highlight and contrast control without exposing a curve graph
@@ -251,7 +254,7 @@ These adjustments:
 ## A Simple First Workflow
 
 1. Export a prepared TIFF, PNG or JPEG from your telescope software.
-2. Open that image in Nebula Master.
+2. Open that image in NebulaMaster.
 3. Choose where the new project folder should be created.
 4. Add one or two broad adjustments.
 5. Aim each adjustment at `Nebula`, `Stars`, `Dark Dust`, or `Combined Image`.
@@ -263,7 +266,7 @@ These adjustments:
 
 ## Projects, Recipes And Reproducibility
 
-Nebula Master keeps the imported source image unchanged.
+NebulaMaster keeps the imported source image unchanged.
 
 The project stores:
 
@@ -298,7 +301,7 @@ The desktop app includes built-in help for first-time users:
 - a `Help` action in the app
 - a first-run help popup
 - a `Do not display this window again` option
-- an `About Nebula Master` dialog with version and support links
+- an `About NebulaMaster` dialog with version and support links
 - clearer startup guidance when no project is open
 - recent project reopening through the `File` menu across app sessions
 
@@ -308,7 +311,7 @@ There is also a PDF quick-start guide here:
 
 ## Supported Inputs
 
-Nebula Master currently works with prepared:
+NebulaMaster currently works with prepared:
 
 - TIFF
 - PNG
@@ -428,7 +431,7 @@ For a normal versioned release:
 
 ## Beta Testing
 
-Nebula Master is now at the point where it is a usable image processor rather than only an
+NebulaMaster is now at the point where it is a usable image processor rather than only an
 experiment. Real telescope images are the best way to find the next problems and the next good
 ideas.
 

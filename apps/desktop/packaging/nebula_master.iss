@@ -13,7 +13,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile={#IconFile}
-UninstallDisplayIcon={app}\Nebula Master.exe
+UninstallDisplayIcon={app}\NebulaMaster.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -25,8 +25,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\Nebula Master.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Nebula Master.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NebulaMaster.exe"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\NebulaMaster.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Nebula Master.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\NebulaMaster.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

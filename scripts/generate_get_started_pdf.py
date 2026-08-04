@@ -40,19 +40,19 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
         )
 
     story: list[object] = [
-        Paragraph("Nebula Master - Get Started", title),
+        Paragraph("NebulaMaster - Get Started", title),
         Spacer(1, 6 * mm),
         Paragraph(
-            "This guide is for someone opening Nebula Master for the first time "
+            "This guide is for someone opening NebulaMaster for the first time "
             "after installing it. It follows the real first-use flow: open an "
             "image, choose where to save the project, add a few adjustments, "
             "save the project, export an image, and reopen the project later.",
             body,
         ),
         Spacer(1, 5 * mm),
-        Paragraph("1. What Nebula Master Is", heading),
+        Paragraph("1. What NebulaMaster Is", heading),
         Paragraph(
-            "Nebula Master is a non-destructive image mastering tool. Your source image "
+            "NebulaMaster is a non-destructive image mastering tool. Your source image "
             "stays unchanged. The project stores adjustment instructions, and the app "
             "renders previews and exports from those instructions.",
             body,
@@ -61,7 +61,7 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
         Paragraph("2. First Launch", heading),
         bullet_items(
             [
-                "Open Nebula Master.",
+                "Open NebulaMaster.",
                 "If Windows or macOS shows a security prompt, allow the app to run "
                 "if you trust the download source.",
                 "When you first start, you may have no projects yet. That is normal.",
@@ -75,24 +75,24 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
                 "Choose File > New Project from Image.",
                 "Pick a source image. TIFF is the best place to start, but PNG and "
                 "JPEG are also supported.",
-                "After choosing the image, Nebula Master will immediately ask where "
+                "After choosing the image, NebulaMaster will immediately ask where "
                 "the new project folder should be created.",
                 "Choose the parent location where you want the project to live.",
                 "The app then creates a new project folder for that image.",
-                "Nebula Master will make a project directory and copy the source "
+                "NebulaMaster will make a project directory and copy the source "
                 "image into it as an immutable input.",
             ]
         ),
         Paragraph(
             "This second folder dialog is not asking where to save an export. It is "
-            "asking where to create the Nebula Master project itself.",
+            "asking where to create the NebulaMaster project itself.",
             body,
         ),
         Spacer(1, 4 * mm),
         Paragraph("4. What the App Created", heading),
         bullet_items(
             [
-                "A Nebula Master project folder is created on disk.",
+                "A NebulaMaster project folder is created on disk.",
                 "That folder contains the project metadata and the imported source image.",
                 "From this point on, you reopen the project folder, not the original image file.",
             ]
@@ -177,7 +177,7 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
                 "Click Create Adjustment from Selection.",
                 "Click a visible feature in the preview.",
                 "Choose the adjustment type when prompted.",
-                "Nebula Master will append a new declarative adjustment and render a new preview.",
+                "NebulaMaster will append a new declarative adjustment and render a new preview.",
             ]
         ),
         Spacer(1, 4 * mm),
@@ -204,7 +204,7 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
         Paragraph("13. Save the Project", heading),
         bullet_items(
             [
-                "Nebula Master tracks unsaved semantic changes at the bottom of the window.",
+                "NebulaMaster tracks unsaved semantic changes at the bottom of the window.",
                 "Use Keep Change to keep the current working changes.",
                 "Use Remove Selected Change or Revert All if you want to undo working edits.",
                 "Save the project so the adjustment metadata is written to the project folder.",
@@ -231,14 +231,14 @@ def _paragraphs(styles: dict[str, ParagraphStyle]) -> list[object]:
         bullet_items(
             [
                 "When you come back later, use File > Open Project.",
-                "Select the Nebula Master project folder you created earlier.",
+                "Select the NebulaMaster project folder you created earlier.",
                 "Do not start again from the original source image unless you "
                 "want a brand-new project.",
             ]
         ),
         Paragraph(
             "A common beginner mistake is reopening the source TIFF, PNG, or JPEG "
-            "instead of reopening the project folder. If you do that, Nebula Master "
+            "instead of reopening the project folder. If you do that, NebulaMaster "
             "will start creating a new project instead of continuing the old one.",
             body,
         ),
@@ -310,9 +310,9 @@ def build_pdf(output_path: Path) -> Path:
         rightMargin=18 * mm,
         topMargin=16 * mm,
         bottomMargin=16 * mm,
-        title="Nebula Master - Get Started",
+        title="NebulaMaster - Get Started",
         author="OpenAI Codex",
-        subject="Basic getting started guide for Nebula Master users",
+        subject="Basic getting started guide for NebulaMaster users",
     )
     doc.build(_paragraphs(styles))
     return output_path

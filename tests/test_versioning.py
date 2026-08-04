@@ -187,7 +187,7 @@ def test_save_version_init_sets_local_identity_when_global_git_config_is_missing
     assert result.exit_code == 0
     assert (
         _git(project_dir, "config", "--local", "--get", "user.name").stdout.strip()
-        == "Nebula Master"
+        == "NebulaMaster"
     )
     assert (
         _git(project_dir, "config", "--local", "--get", "user.email").stdout.strip()
