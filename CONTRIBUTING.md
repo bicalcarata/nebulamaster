@@ -104,5 +104,4 @@ Thank you for helping make NebulaMaster better.
 
 Clear skies,
 
-Damon
-Project Maintainer
+D Randall - Project Lead
