@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 import yaml
 from engine import EXIT_VALIDATION_SUCCESS
+from engine.executor import execute_rule_stack
 from engine.preview import render_preview, render_preview_image
 from engine.selection import (
     apply_colour_temperature,
@@ -35,6 +37,9 @@ FAUX_PALETTE_NAMES = {
     "gold_cyan": "Gold & Cyan",
     "natural_bicolour": "Natural Bi-colour",
 }
+REAL_WORLD_STAR_HALO_FIXTURE = (
+    Path(__file__).parent / "fixtures/images/star-halo-nebula-crop.png"
+)
 
 
 def _write_palette(project_dir: Path) -> None:
@@ -130,6 +135,10 @@ def _write_star_nebula_source_image(path: Path, size: tuple[int, int] = (64, 48)
     for x, y in stars:
         data[max(0, y - 1) : y + 2, max(0, x - 1) : x + 2, :] = [255, 255, 255]
     Image.fromarray(data, mode="RGB").save(path, format="PNG")
+
+
+def _copy_real_world_star_halo_fixture(path: Path) -> None:
+    shutil.copy2(REAL_WORLD_STAR_HALO_FIXTURE, path)
 
 
 def _dark_nebula_fixture_float_image(size: tuple[int, int] = (96, 64)) -> np.ndarray:
@@ -1747,6 +1756,55 @@ def test_faux_hubble_targeting_nebula_protects_stars(tmp_path: Path) -> None:
 
     assert star_delta < 0.02
     assert nebula_delta > 0.02
+
+
+def test_star_influence_protects_real_world_star_halo_fixture() -> None:
+    image = load_canonical_image(REAL_WORLD_STAR_HALO_FIXTURE).data
+    mask = star_influence(image)
+
+    # Relative to the crop created from the user-provided raw frame.
+    star_core = float(mask[110, 149])
+    star_halo_primary = float(mask[110, 153])
+    star_halo_secondary = float(mask[114, 149])
+    nebula = float(mask[240, 220])
+
+    assert star_core > 0.95
+    assert star_halo_primary > 0.90
+    assert star_halo_secondary > 0.90
+    assert nebula < 0.05
+
+
+def test_faux_hubble_targeting_nebula_protects_real_world_star_halo_fixture(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "nebula-faux-real-world"
+    project_dir.mkdir()
+    _write_common_files(project_dir)
+    _copy_real_world_star_halo_fixture(project_dir / "sources/source.png")
+    payload = _base_project_payload(
+        [_rule_faux_palette(rule_id="faux", name="Faux Hubble", target="nebula", amount=1.0)]
+    )
+    (project_dir / "project.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    bundle, report = load_valid_project_bundle(project_dir)
+    assert bundle is not None
+    assert report.valid is True
+
+    source = load_canonical_image(project_dir / "sources/source.png").data
+    output = execute_rule_stack(bundle, source).image
+
+    star_core_delta = float(np.abs(output[110, 149] - source[110, 149]).max())
+    star_halo_primary_delta = float(np.abs(output[110, 153] - source[110, 153]).max())
+    star_halo_secondary_delta = float(np.abs(output[114, 149] - source[114, 149]).max())
+    nebula_delta = float(np.abs(output[240, 220] - source[240, 220]).max())
+
+    assert star_core_delta < 0.01
+    assert star_halo_primary_delta < 0.03
+    assert star_halo_secondary_delta < 0.03
+    assert nebula_delta > 0.08
 
 
 def test_faux_hubble_targeting_dark_dust_uses_dark_dust_mask(tmp_path: Path) -> None:

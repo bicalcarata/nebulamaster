@@ -43,12 +43,34 @@ def star_influence(image_rgb: np.ndarray) -> np.ndarray:
     compact_peak = np.clip((peak - 0.12) / 0.22, 0.0, 1.0)
     compact_neutrality = np.clip((neutrality - 0.86) / 0.12, 0.0, 1.0)
 
-    weights = np.clip(
+    core_weights = np.clip(
         compact_ratio * compact_delta * compact_peak * compact_neutrality,
         0.0,
         1.0,
+    ).astype(np.float32, copy=False)
+
+    # Protect the visible halo around bright stars as well as the compact core.
+    # This keeps nebula-targeted colour treatments from tinting stellar halos
+    # cyan, gold or red while still leaving broad nebula structure untouched.
+    halo_radius = max(3, min(6, int(round(min(height, width) * 0.004))))
+    halo_seed = box_blur(
+        np.repeat(core_weights[..., None], 3, axis=-1),
+        halo_radius,
+    )[..., 0]
+    halo_seed = np.clip(halo_seed * 5.0, 0.0, 1.0).astype(np.float32, copy=False)
+    halo_peak = np.clip((peak - 0.10) / 0.25, 0.0, 1.0).astype(np.float32, copy=False)
+    halo_lift = np.clip((peak - local_average) / 0.18, 0.0, 1.0).astype(
+        np.float32,
+        copy=False,
     )
-    return np.asarray(weights.astype(np.float32, copy=False), dtype=np.float32)
+    halo_weights = np.clip(
+        halo_seed * halo_peak * halo_lift,
+        0.0,
+        1.0,
+    ).astype(np.float32, copy=False)
+
+    weights = np.maximum(core_weights, halo_weights).astype(np.float32, copy=False)
+    return np.asarray(weights, dtype=np.float32)
 
 
 def _radius_from_fraction(
